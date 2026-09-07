@@ -2,9 +2,11 @@
 #include "Misc/AutomationTest.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+#include "Combat/METSEBallistics.h"
 #include "Core/METSEMovementIntent.h"
 #include "Performance/METSEPerformancePolicy.h"
 #include "Performance/METSEWorldBudgetSubsystem.h"
+#include "Weapons/METSEWeaponDefinition.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMETSEPerformancePolicyTest,
@@ -75,6 +77,34 @@ bool FMETSEMovementIntentSerializationTest::RunTest(const FString&)
     TestEqual(TEXT("Sprint survives round trip"), Restored.bSprint, Source.bSprint);
     TestEqual(TEXT("Aim survives round trip"), Restored.bAim, Source.bAim);
     TestEqual(TEXT("Fire survives round trip"), Restored.bFire, Source.bFire);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMETSEBallisticsMathTest,
+    "METSE.Core.Combat.BallisticsMath",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMETSEBallisticsMathTest::RunTest(const FString&)
+{
+    FMETSEBallisticProfile Profile;
+    Profile.ProjectileMassGrams = 10.0f;
+    Profile.MuzzleVelocityMps = 500.0f;
+    Profile.BallisticCoefficient = 0.30f;
+    Profile.GravityScale = 1.0f;
+
+    TestTrue(TEXT("Baseline ballistic profile is valid"), FMETSEBallistics::IsValidProfile(Profile));
+    TestTrue(TEXT("Zero-mass profile is rejected"), [&Profile]() { FMETSEBallisticProfile Invalid = Profile; Invalid.ProjectileMassGrams = 0.0f; return !FMETSEBallistics::IsValidProfile(Invalid); }());
+
+    const double Energy = FMETSEBallistics::KineticEnergyJoules(Profile, 500.0);
+    TestTrue(TEXT("Kinetic energy calculation"), FMath::IsNearlyEqual(Energy, 1250.0, 0.001));
+
+    const double Time = FMETSEBallistics::TimeToDistanceSeconds(100.0, 500.0);
+    TestTrue(TEXT("Time-to-distance calculation"), FMath::IsNearlyEqual(Time, 0.2, 0.000001));
+
+    const double Drop = FMETSEBallistics::VacuumDropMeters(Profile, 100.0, 500.0);
+    TestTrue(TEXT("Vacuum drop is deterministic and positive"), Drop > 0.19 && Drop < 0.20);
+    TestEqual(TEXT("Invalid velocity returns zero energy"), FMETSEBallistics::KineticEnergyJoules(Profile, -1.0), 0.0);
     return true;
 }
 #endif
