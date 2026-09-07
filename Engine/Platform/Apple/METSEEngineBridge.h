@@ -13,5 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)cycleStance;
 - (void)triggerFire;
 - (NSString *)statusString;
+- (NSDictionary<NSString *, id> *)observatorySnapshot;
+- (NSString *)observatoryReportText;
 @end
 NS_ASSUME_NONNULL_END
