@@ -9,6 +9,10 @@ final class GameViewController: UIViewController {
     private var leftStart = CGPoint.zero
     private var rightLast = CGPoint.zero
 
+    override var prefersStatusBarHidden: Bool { true }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .landscapeRight }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black

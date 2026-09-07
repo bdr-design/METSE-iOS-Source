@@ -59,10 +59,10 @@ jobs:
       - name: Upload verified IPA
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-v0.1.1-build003-native-metal-unsigned
+          name: METSE-v0.1.2-build004-native-metal-unsigned
           if-no-files-found: error
           retention-days: 14
           path: |
-            .ci-output/METSE_v0.1.1_build003_unsigned.ipa
-            .ci-output/METSE_v0.1.1_build003_unsigned.ipa.sha256
+            .ci-output/METSE_v0.1.2_build004_unsigned.ipa
+            .ci-output/METSE_v0.1.2_build004_unsigned.ipa.sha256
             .ci-output/xcodebuild.log
