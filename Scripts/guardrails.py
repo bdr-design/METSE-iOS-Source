@@ -16,6 +16,10 @@ require('r.Nanite.ProjectEnabled=False' in eng,'Nanite must remain disabled for 
 require('r.DynamicGlobalIlluminationMethod=0' in eng,'Dynamic GI must remain disabled in baseline')
 require('MaxCombatants=32' in game,'Combatant hard cap must remain 32')
 require('TargetFPS=60' in game and 'ProtectionFPS=30' in game,'FPS guardrails missing')
+require('bUseIoStore=False' in game and 'bUsePakFile=True' in game,'Development update baseline must remain PAK-based without IoStore')
+trusted_hosts=re.findall(r'^\+TrustedHosts=(.+)$',game,re.MULTILINE)
+require(len(trusted_hosts)>=1,'At least one trusted update host must be configured')
+require(all(host.strip() and '://' not in host and '/' not in host for host in trusted_hosts),'Trusted update hosts must be bare domains')
 
 ipa_workflow=ROOT/'.github/workflows/build-ios-unsigned.yml'
 require(ipa_workflow.exists(),'Unsigned IPA workflow missing')
@@ -28,10 +32,13 @@ update_cpp=(ROOT/'Source/METSE/Update/METSEUpdateCenterSubsystem.cpp'); require(
 if update_cpp.exists():
     ut=update_cpp.read_text(errors='ignore')
     require('https://' in ut,'Update Center must enforce HTTPS')
+    require('GetUrlDomain' in ut and 'TrustedHosts' in ut,'Update Center must validate trusted update domains')
     require('GetSHA256Signature' in ut,'Update Center must verify SHA-256')
     require('MountPak.IsBound()' in ut,'Update Center must fail closed when PAK mount is unavailable')
     require('MaxPackageBytes' in ut,'Update Center must have a package-size safety cap')
     require('requiresAppBuild' in ut and 'contentSchema' in ut,'Update compatibility gates missing')
+    require('sequence' in ut and 'ActiveSequence' in ut,'Update Center anti-downgrade sequence gate missing')
+    require('Manifest.Sequence <= ActiveSequence' in ut,'Update Center must reject stale/replayed update sequences')
 for p in (ROOT/'Source').rglob('*'):
     if p.is_file() and not is_skipped(p) and p.suffix in {'.cpp','.h'}:
         txt=p.read_text(errors='ignore')
