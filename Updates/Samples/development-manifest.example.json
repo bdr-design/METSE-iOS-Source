@@ -1,0 +1,13 @@
+{
+  "updateVersion": "0.1.1-content001",
+  "channel": "development",
+  "packageUrl": "https://example.invalid/METSE/content_0.1.1-content001.pak",
+  "packageSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "packageType": "content_patch",
+  "minimumCoreVersion": "0.1.0",
+  "requiresAppBuild": 1,
+  "contentSchema": 1,
+  "sizeBytes": 1,
+  "restartRequired": false,
+  "mountPoint": ""
+}

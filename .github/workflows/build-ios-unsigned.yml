@@ -1,0 +1,41 @@
+name: METSE iOS — Verified Unsigned IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+permissions:
+  contents: read
+jobs:
+  verified-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash Scripts/static_checks.sh
+  ios-build:
+    needs: verified-source
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preflight macOS, Xcode, Unreal and source integrity
+        env:
+          UE_ROOT: ${{ vars.UE_ROOT }}
+        run: bash Scripts/ci_preflight_macos.sh
+      - name: Unreal automation tests
+        env:
+          UE_ROOT: ${{ vars.UE_ROOT }}
+        run: bash Scripts/run_unreal_tests_macos.sh
+      - name: Build, cook, stage and create unsigned IPA
+        env:
+          UE_ROOT: ${{ vars.UE_ROOT }}
+        run: bash Scripts/build_ios_unsigned_macos.sh
+      - name: Upload verified artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: METSE-v0.1.0-build001-unsigned-IPA
+          if-no-files-found: error
+          path: |
+            Artifacts/METSE_v0.1.0_build001_unsigned.ipa
+            Artifacts/METSE_v0.1.0_build001_unsigned.ipa.sha256
+            TestResults/**
+            BuildLogs/**
