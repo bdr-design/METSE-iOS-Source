@@ -15,9 +15,12 @@ protected:
     void MoveForward(float Value); void MoveRight(float Value); void LookYaw(float Value); void LookPitch(float Value);
     void SprintPressed(); void SprintReleased(); void CrouchPressed(); void AimPressed(); void AimReleased();
     void ApplyIntentLocally();
-    UFUNCTION(Server,Reliable) void ServerSetMovementIntent(FMETSEMovementIntent NewIntent);
+    void MaybeSendIntent(bool bForce=false);
+    UFUNCTION(Server,Unreliable) void ServerSetMovementIntent(FMETSEMovementIntent NewIntent);
     UPROPERTY(VisibleAnywhere) TObjectPtr<USpringArmComponent> SpringArm;
     UPROPERTY(VisibleAnywhere) TObjectPtr<UCameraComponent> Camera;
     UPROPERTY(VisibleAnywhere) TObjectPtr<UMETSEHealthComponent> Health;
     FMETSEMovementIntent Intent;
+    double LastIntentSendSeconds=-1.0;
+    static constexpr double IntentSendIntervalSeconds=0.05;
 };
