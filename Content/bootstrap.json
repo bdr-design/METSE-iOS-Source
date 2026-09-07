@@ -1,7 +1,7 @@
 {
   "contentSchema": 1,
-  "contentVersion": "0.1.0-dev.1",
-  "sequence": 1,
+  "contentVersion": "0.2.0-dev.1",
+  "sequence": 2,
   "channel": "development",
   "updateManifestURL": "",
   "trustedUpdateHosts": [],
@@ -10,5 +10,16 @@
     "fixedStepHz": 60,
     "maxCatchUpSteps": 4,
     "maxCombatants": 32
+  },
+  "runtimeObservatory": {
+    "enabled": true,
+    "frameWindow": 600,
+    "blackBoxFrames": 720,
+    "exportReport": true
+  },
+  "worldCollision": {
+    "schema": 1,
+    "trainingWorldHalfExtentMeters": 48,
+    "characterCapsuleRadiusMeters": 0.34
   }
 }

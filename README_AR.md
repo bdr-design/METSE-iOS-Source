@@ -1,27 +1,25 @@
-# METSE — Native Metal Baseline
+# METSE — Middle East Tactical Simulation Engine
 
-هذه هي قاعدة METSE الجديدة بعد فصل المحرك عن واجهة التطبيق.
+لعبة تكتيكية Native على iPhone مبنية على C++ مستقل + Objective-C++ bridge + Metal مباشر.
 
-## البنية
+## Baseline الحالي
+- Version: 0.2.0
+- Build: 007
+- iPhone / Landscape / Native Metal
+- 32 combatants max
+- Runtime Integrity Control Plane
+- Character Motor + gait model + camera feel
+- World Collision Foundation
+- In-game Observatory Center
+- Black Box 720 frames
+- Observatory frame window 600 frames
 
-- `iOS/METSE/` — App Shell وبوابة الدخول وواجهات النظام.
-- `Engine/Core/` — محرك المحاكاة C++ بلا UIKit/Metal.
-- `Engine/Platform/Apple/` — جسر Objective-C++ بين iOS والمحرك.
-- `Shaders/` — Metal shaders.
-- `Content/` — بيانات قابلة للتحديث بدون تغيير الكود.
-- `Scripts/` — الجدار الوقائي وبناء GitHub.
-- `Tests/` — اختبارات المحرك المستقلة.
+## حدود الملكية
+- C++ هو مصدر حقيقة الـsimulation والـworld collision.
+- Swift مسؤول عن واجهة iOS والإدخال والعرض التشخيصي، ولا يملك gameplay state.
+- Metal يستهلك snapshots وworld footprints ولا يقرر منطق اللعب.
+- مركز الأرصاد read-only على حالة اللعب ويصدر تقريراً تقنياً للمراجعة.
+- Content/Data منفصل عن الكود الأصلي.
 
-## قاعدة الملكية
-
-Swift لا يملك simulation state.
-Metal لا يملك gameplay state.
-C++ Core لا يعرف UIKit أو Xcode.
-Update Center لا ينزل أي كود تنفيذي؛ فقط Content/Data متوافق مع schema.
-
-## بناء iPhone
-
-GitHub Actions على `macos-15`:
-Source integrity → Guardrails → C++ tests → Swift parse → XcodeGen → xcodebuild iphoneos بدون توقيع → Payload/METSE.app → IPA unsigned.
-
-لا تحتاج شهادة داخل GitHub. بعد نجاح الـArtifact تنقل IPA وتوقعه بشهادتك.
+## سياسة الإصدارات
+من Build 007 فصاعداً نفضل حزم تطوير كبيرة مترابطة بدلاً من IPA جديد لكل تعديل صغير. لا يصدر IPA إلا بعد نجاح integrity + guardrails + C++ tests + Swift parse + Xcode iPhoneOS build + package validation.
