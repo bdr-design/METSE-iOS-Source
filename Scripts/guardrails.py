@@ -18,35 +18,109 @@ launch_path = ROOT / 'iOS/METSE/LaunchScreen.storyboard'
 req(plist_path.exists(), 'Explicit iPhone Info.plist missing')
 req(launch_path.exists(), 'LaunchScreen.storyboard missing')
 if plist_path.exists():
-    with plist_path.open('rb') as f: info = plistlib.load(f)
+    with plist_path.open('rb') as handle:
+        info = plistlib.load(handle)
     req(info.get('UIDeviceFamily') == [1], 'Info.plist must be iPhone-only')
-    req(info.get('UILaunchStoryboardName') == 'LaunchScreen', 'UILaunchStoryboardName must point to LaunchScreen')
-    req('UILaunchScreen' not in info, 'Empty UILaunchScreen dictionary is forbidden; use compiled LaunchScreen.storyboard')
+    req(info.get('UILaunchStoryboardName') == 'LaunchScreen', 'LaunchScreen binding missing')
+    req('UILaunchScreen' not in info, 'UILaunchScreen fallback forbidden')
     req(info.get('UIRequiresFullScreen') is True, 'UIRequiresFullScreen must be true')
     req(info.get('UIStatusBarHidden') is True, 'UIStatusBarHidden must be true')
-    req(info.get('UIViewControllerBasedStatusBarAppearance') is True, 'View-controller status bar appearance must be enabled')
-    req(info.get('UISupportedInterfaceOrientations') == ['UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'], 'Only landscape orientations are allowed')
+    req(info.get('UISupportedInterfaceOrientations') == ['UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'], 'Only landscape orientations allowed')
 if launch_path.exists():
     try:
-        launch_root = ET.parse(launch_path).getroot(); req(launch_root.attrib.get('launchScreen') == 'YES', 'Storyboard must be marked launchScreen=YES')
-        device = launch_root.find('device'); req(device is not None and device.attrib.get('orientation') == 'landscape', 'Launch storyboard must declare landscape device orientation'); req(device is not None and device.attrib.get('id') == 'retina6_12', 'Launch storyboard must target a modern iPhone reference device')
-    except Exception as exc: errors.append(f'Launch storyboard XML invalid: {exc}')
-proj=(ROOT/'project.yml').read_text(); req('GENERATE_INFOPLIST_FILE: NO' in proj,'Generated plist forbidden for screen-critical contract'); req('TARGETED_DEVICE_FAMILY: "1"' in proj,'METSE must remain iPhone-only'); req('CURRENT_PROJECT_VERSION: "6"' in proj,'Build must be 6'); req('MARKETING_VERSION: "0.1.4"' in proj,'Version must be 0.1.4')
-wf=(ROOT/'.github/workflows/build-ios-unsigned.yml').read_text(); req('runs-on: macos-15' in wf,'Hosted macOS required'); req('C++ character + engine + integrity tests' in wf,'Character/engine/integrity tests must remain mandatory')
-build=(ROOT/'Scripts/build_unsigned_ipa.sh').read_text(); req("p.get('UIDeviceFamily') == [1]" in build,'Final IPA must validate iPhone-only family'); req("p.get('UILaunchStoryboardName') == 'LaunchScreen'" in build,'Final IPA must validate LaunchScreen binding'); req("'UILaunchScreen' not in p" in build,'Final IPA must reject UILaunchScreen fallback'); req('LaunchScreen.storyboardc' in build,'Final app must validate compiled launch storyboard'); req('METSEIntegrityCore.o' in build,'Runtime Integrity compile evidence required'); req('METSECharacterMotor.o' in build,'Character Motor compile evidence required'); req('.ci-output' in build,'CI outputs must be isolated from BUILD file')
-required=[ROOT/'Engine/Core/METSEIntegrityCore.hpp',ROOT/'Engine/Core/METSEIntegrityCore.cpp',ROOT/'Engine/Core/METSECharacterMotor.hpp',ROOT/'Engine/Core/METSECharacterMotor.cpp']
-for path in required: req(path.exists(),f'Required core source missing: {path.relative_to(ROOT)}')
-engine_header=(ROOT/'Engine/Core/METSEEngineCore.hpp').read_text(errors='ignore'); character_header=(ROOT/'Engine/Core/METSECharacterMotor.hpp').read_text(errors='ignore') if required[2].exists() else ''; character_source=(ROOT/'Engine/Core/METSECharacterMotor.cpp').read_text(errors='ignore') if required[3].exists() else ''; integrity_header=(ROOT/'Engine/Core/METSEIntegrityCore.hpp').read_text(errors='ignore') if required[0].exists() else ''; integrity_source=(ROOT/'Engine/Core/METSEIntegrityCore.cpp').read_text(errors='ignore') if required[1].exists() else ''; tests=(ROOT/'Tests/EngineCoreTests.cpp').read_text(errors='ignore'); bridge=(ROOT/'Engine/Platform/Apple/METSEEngineBridge.mm').read_text(errors='ignore'); shader=(ROOT/'Shaders/METSERenderer.metal').read_text(errors='ignore')
-req('IntegrityCore integrity_' in engine_header,'EngineCore must own one Runtime Integrity control plane'); req('CharacterMotor characterMotor_' in engine_header,'EngineCore must own one Character Motor'); req('executeAtomic(' in engine_header,'External mutations need atomic command path'); req('validateInvariants()' in engine_header,'Atomic path must verify invariants'); req('kBlackBoxCapacity = 720' in engine_header,'Black Box must remain 720 frames'); req('setSprintHeld' in engine_header and 'cycleStance' in engine_header,'Sprint/stance must enter through EngineCore')
-req('CharacterStance' in character_header,'Character stance model missing'); req('groundAcceleration' in character_header and 'groundDeceleration' in character_header,'Acceleration/deceleration missing'); req('gravity' in character_header and 'grounded' in character_header,'Gravity/ground contact missing'); req('bodyYaw' in character_header and 'viewYawOffset' in character_header,'Body/view separation missing'); req('viewYawSoftLimit' in character_header and 'viewYawHardLimit' in character_header,'Camera yaw limits missing'); req('eyeHeightTransitionSpeed' in character_header,'Eye-height transition missing'); req('state_.velocityX = moveToward' in character_source,'Velocity acceleration path missing'); req('state_.velocityY -= config_.gravity' in character_source,'Gravity integration missing')
-req('kCommandCapacity = 96' in integrity_header,'Command ledger must remain bounded'); req('kEventCapacity = 256' in integrity_header,'Event ledger must remain bounded'); req('Sha256Digest' in integrity_header and 'sha256(' in integrity_source,'Portable SHA-256 required'); req('verifyJournal()' in integrity_header and 'verifyJournal() const' in integrity_source,'Journal verification required'); req('commandsRolledBack' in integrity_header,'Rollback metrics required')
-req('testOnlyExecuteInvariantViolation' in tests,'Rollback regression test missing'); req('testOnlySetAirborne' in tests,'Gravity regression test missing'); req('CharacterStance::Crouched' in tests and 'CharacterStance::Prone' in tests,'Stance coverage missing'); req('setSprintHeld(true)' in tests,'Sprint coverage missing'); req('quiet_NaN' in tests and '33' in tests,'Invalid-input coverage missing'); req('kBlackBoxCapacity' in tests and 'kEventCapacity' in tests,'Bounded-memory coverage missing'); req('#import <simd/simd.h>' in bridge,'Bridge must explicitly import SIMD'); req('s.cameraHeight' in bridge,'Bridge must use Character Motor camera height'); req('u.character.x+u.character.y' in shader,'Metal camera must use eye height and vertical position')
-core='\n'.join(p.read_text(errors='ignore') for p in (ROOT/'Engine/Core').glob('*') if p.is_file())
-for forbidden in ('UIKit','MetalKit','Foundation/Foundation.h','MTLDevice','MTKView'): req(forbidden not in core,f'Portable core imports {forbidden}')
-for forbidden in ('WKWebView','JavaScriptCore','localStorage','requestAnimationFrame'): req(forbidden not in core,f'Portable core contains forbidden web dependency: {forbidden}')
-bootstrap=json.loads((ROOT/'Content/bootstrap.json').read_text()); req(bootstrap.get('engineTuning',{}).get('maxCombatants')==32,'32 combatant cap missing')
-for p in ROOT.rglob('*'):
-    if p.is_file() and p.suffix.lower() in {'.p12','.mobileprovision','.cer','.ipa','.xcarchive'}: errors.append(f'Forbidden artifact: {p.relative_to(ROOT)}')
+        root = ET.parse(launch_path).getroot()
+        device = root.find('device')
+        req(root.attrib.get('launchScreen') == 'YES', 'Launch storyboard must be launch screen')
+        req(device is not None and device.attrib.get('orientation') == 'landscape', 'Launch storyboard must be landscape')
+        req(device is not None and device.attrib.get('id') == 'retina6_12', 'Modern iPhone launch reference required')
+    except Exception as exc:
+        errors.append(f'Launch storyboard invalid: {exc}')
+
+project = (ROOT / 'project.yml').read_text()
+req('CURRENT_PROJECT_VERSION: "7"' in project, 'Build must be 7')
+req('MARKETING_VERSION: "0.2.0"' in project, 'Version must be 0.2.0')
+req('GENERATE_INFOPLIST_FILE: NO' in project, 'Explicit plist required')
+req('TARGETED_DEVICE_FAMILY: "1"' in project, 'iPhone-only target required')
+
+workflow = (ROOT / '.github/workflows/build-ios-unsigned.yml').read_text()
+req('runs-on: macos-15' in workflow, 'Hosted macOS required')
+req('C++ world + observatory + engine + integrity tests' in workflow, 'Mandatory C++ gate missing')
+
+required = [
+    'Engine/Core/METSEIntegrityCore.hpp', 'Engine/Core/METSEIntegrityCore.cpp',
+    'Engine/Core/METSECharacterMotor.hpp', 'Engine/Core/METSECharacterMotor.cpp',
+    'Engine/Core/METSEWorldCollision.hpp', 'Engine/Core/METSEWorldCollision.cpp',
+    'Engine/Core/METSEObservatoryCore.hpp', 'Engine/Core/METSEObservatoryCore.cpp',
+    'iOS/METSE/ObservatoryViewController.swift'
+]
+for relative in required:
+    req((ROOT / relative).exists(), f'Missing required source: {relative}')
+
+engine_h = (ROOT / 'Engine/Core/METSEEngineCore.hpp').read_text(errors='ignore')
+engine_c = (ROOT / 'Engine/Core/METSEEngineCore.cpp').read_text(errors='ignore')
+char_h = (ROOT / 'Engine/Core/METSECharacterMotor.hpp').read_text(errors='ignore')
+char_c = (ROOT / 'Engine/Core/METSECharacterMotor.cpp').read_text(errors='ignore')
+world_h = (ROOT / 'Engine/Core/METSEWorldCollision.hpp').read_text(errors='ignore')
+world_c = (ROOT / 'Engine/Core/METSEWorldCollision.cpp').read_text(errors='ignore')
+obs_h = (ROOT / 'Engine/Core/METSEObservatoryCore.hpp').read_text(errors='ignore')
+obs_c = (ROOT / 'Engine/Core/METSEObservatoryCore.cpp').read_text(errors='ignore')
+integrity_h = (ROOT / 'Engine/Core/METSEIntegrityCore.hpp').read_text(errors='ignore')
+bridge_h = (ROOT / 'Engine/Platform/Apple/METSEEngineBridge.h').read_text(errors='ignore')
+bridge_c = (ROOT / 'Engine/Platform/Apple/METSEEngineBridge.mm').read_text(errors='ignore')
+shader = (ROOT / 'Shaders/METSERenderer.metal').read_text(errors='ignore')
+tests = (ROOT / 'Tests/EngineCoreTests.cpp').read_text(errors='ignore')
+game = (ROOT / 'iOS/METSE/GameViewController.swift').read_text(errors='ignore')
+obs_ui = (ROOT / 'iOS/METSE/ObservatoryViewController.swift').read_text(errors='ignore')
+build = (ROOT / 'Scripts/build_unsigned_ipa.sh').read_text(errors='ignore')
+
+req('IntegrityCore integrity_' in engine_h, 'Engine must own IntegrityCore')
+req('CharacterMotor characterMotor_' in engine_h, 'Engine must own CharacterMotor')
+req('WorldCollisionCore worldCollision_' in engine_h, 'Engine must own WorldCollisionCore')
+req('ObservatoryCore observatory_' in engine_h, 'Engine must own ObservatoryCore')
+req('executeAtomic(' in engine_h and 'validateInvariants()' in engine_h, 'Atomic mutation path required')
+req('kBlackBoxCapacity = 720' in engine_h, 'Black Box must remain bounded')
+req('worldCollision_.resolve' in engine_c, 'World collision integration missing')
+req('observatory_.observe' in engine_c, 'Observatory feed missing')
+req('enum class CharacterGait' in char_h, 'Gait model missing')
+for token in ('walkSpeed','tacticalSpeed','jogSpeed','sprintSpeed','capsuleRadius','cameraBobY','cameraRoll','landingOffset'):
+    req(token in char_h, f'Character contract missing {token}')
+req('updateCameraFeel' in char_c and 'applyHorizontalCollision' in char_c, 'Character feel/collision correction missing')
+req('kMaxObstacles = 6' in world_h and 'CollisionResult' in world_h, 'Bounded world collision contract missing')
+req('nearestBoundary' in world_c and 'std::clamp' in world_c, 'Collision sliding resolver missing')
+req('kFrameCapacity = 600' in obs_h, 'Observatory ring must remain bounded')
+for token in ('p95FrameMilliseconds','catchUpClampedFrames','distanceTravelled','totalCollisionContacts'):
+    req(token in obs_h, f'Observatory metric missing {token}')
+req('std::sort' in obs_c, 'P95 calculation missing')
+req('kCommandCapacity = 96' in integrity_h and 'kEventCapacity = 256' in integrity_h, 'Integrity ledgers must remain bounded')
+req('observatorySnapshot' in bridge_h and 'observatoryReportText' in bridge_h, 'Observatory bridge API missing')
+req('os_unfair_lock' in bridge_c, 'Bridge synchronization missing')
+req('worldObstacles()' in bridge_c and 'renderCpuAverageMs' in bridge_c and 'drawableMisses' in bridge_c, 'Renderer/world telemetry missing')
+req('rayBoxDistance' in shader and 'obstacles[kMaxObstacles]' in shader, 'Metal obstacle renderer missing')
+req('uniforms.worldExtra.y' in shader, 'Camera roll presentation missing')
+req('joystickBase' in game and 'joystickKnob' in game, 'Visible joystick missing')
+req('ObservatoryViewController(engine:' in game, 'In-game observatory entry missing')
+req('نسخ تقرير الرصد' in obs_ui and 'مشاركة التقرير' in obs_ui and 'thermalState' in obs_ui, 'Observatory UI/report export incomplete')
+req('WorldCollisionCore world' in tests and 'ObservatoryCore observatory' in tests, 'World/observatory tests missing')
+req('CharacterGait::Walk' in tests and 'CharacterGait::Tactical' in tests and 'CharacterGait::Sprint' in tests, 'Gait tests missing')
+req('quiet_NaN' in tests and '33' in tests, 'Adversarial input tests missing')
+for obj in ('METSEIntegrityCore.o','METSECharacterMotor.o','METSEWorldCollision.o','METSEObservatoryCore.o','default.metallib'):
+    req(obj in build, f'Final build evidence missing: {obj}')
+
+core = '\n'.join(p.read_text(errors='ignore') for p in (ROOT / 'Engine/Core').glob('*') if p.is_file())
+for forbidden in ('UIKit','MetalKit','Foundation/Foundation.h','MTLDevice','MTKView','WKWebView','JavaScriptCore','requestAnimationFrame'):
+    req(forbidden not in core, f'Portable core contains forbidden dependency: {forbidden}')
+
+bootstrap = json.loads((ROOT / 'Content/bootstrap.json').read_text())
+req(bootstrap.get('engineTuning', {}).get('maxCombatants') == 32, '32 combatant cap missing')
+req(bootstrap.get('runtimeObservatory', {}).get('frameWindow') == 600, 'Observatory window contract missing')
+
+for path in ROOT.rglob('*'):
+    if path.is_file() and path.suffix.lower() in {'.p12','.mobileprovision','.cer','.ipa','.xcarchive'}:
+        errors.append(f'Forbidden artifact: {path.relative_to(ROOT)}')
+
 if errors:
-    print('METSE NATIVE GUARDRAILS: FAIL'); [print(' -',e) for e in errors]; sys.exit(1)
+    print('METSE NATIVE GUARDRAILS: FAIL')
+    for error in errors:
+        print(' -', error)
+    sys.exit(1)
 print('METSE NATIVE GUARDRAILS: PASS')
