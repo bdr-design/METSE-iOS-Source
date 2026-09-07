@@ -9,6 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stop;
 - (void)setMoveForward:(float)forward strafe:(float)strafe;
 - (void)addLookYaw:(float)yaw pitch:(float)pitch;
+- (void)setSprintHeld:(BOOL)held;
+- (void)cycleStance;
 - (void)triggerFire;
 - (NSString *)statusString;
 @end

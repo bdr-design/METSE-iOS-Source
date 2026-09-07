@@ -18,14 +18,11 @@ on:
       - 'BUILD'
       - 'SOURCE_INTEGRITY_SHA256.txt'
       - '.github/workflows/build-ios-unsigned.yml'
-
 permissions:
   contents: read
-
 concurrency:
   group: metse-native-ios-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build-ipa:
     runs-on: macos-15
@@ -33,37 +30,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Source integrity
         run: python3 Scripts/verify_integrity.py
-
       - name: Architecture guardrails
         run: python3 Scripts/guardrails.py
-
-      - name: C++ engine + integrity tests
+      - name: C++ character + engine + integrity tests
         run: bash Scripts/test_engine_core.sh
-
       - name: Swift syntax
         shell: bash
         run: |
           set -euo pipefail
-          while IFS= read -r file; do
-            xcrun swiftc -frontend -parse "$file"
-          done < <(find iOS -name '*.swift' -type f | sort)
-
+          while IFS= read -r file; do xcrun swiftc -frontend -parse "$file"; done < <(find iOS -name '*.swift' -type f | sort)
       - name: Install XcodeGen
         run: brew install xcodegen
-
       - name: Build native unsigned IPA
         run: bash Scripts/build_unsigned_ipa.sh
-
       - name: Upload verified IPA
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-v0.1.3-build005-runtime-integrity-unsigned
+          name: METSE-v0.1.4-build006-character-camera-unsigned
           if-no-files-found: error
           retention-days: 14
           path: |
-            .ci-output/METSE_v0.1.3_build005_unsigned.ipa
-            .ci-output/METSE_v0.1.3_build005_unsigned.ipa.sha256
+            .ci-output/METSE_v0.1.4_build006_unsigned.ipa
+            .ci-output/METSE_v0.1.4_build006_unsigned.ipa.sha256
             .ci-output/xcodebuild.log

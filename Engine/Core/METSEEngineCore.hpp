@@ -1,5 +1,6 @@
 #pragma once
 
+#include "METSECharacterMotor.hpp"
 #include "METSEIntegrityCore.hpp"
 
 #include <array>
@@ -13,7 +14,7 @@ struct EngineConfig {
     double fixedStepSeconds = 1.0 / 60.0;
     std::uint32_t maxCatchUpSteps = 4;
     std::uint32_t maxCombatants = 32;
-    double playerMoveSpeed = 4.5;
+    CharacterConfig character{};
 };
 
 struct EngineSnapshot {
@@ -22,9 +23,19 @@ struct EngineSnapshot {
     std::uint32_t activeCombatants = 0;
     double interpolationAlpha = 0.0;
     double playerX = 0.0;
+    double playerY = 0.0;
     double playerZ = 0.0;
+    double velocityX = 0.0;
+    double velocityY = 0.0;
+    double velocityZ = 0.0;
+    double playerBodyYaw = 0.0;
     double playerYaw = 0.0;
     double playerPitch = 0.0;
+    double cameraHeight = 1.64;
+    double horizontalSpeed = 0.0;
+    CharacterStance stance = CharacterStance::Standing;
+    bool grounded = true;
+    bool sprinting = false;
     std::uint64_t shotsFired = 0;
 };
 
@@ -33,13 +44,23 @@ struct BlackBoxFrame {
     double simulationSeconds = 0.0;
     double realDeltaSeconds = 0.0;
     double playerX = 0.0;
+    double playerY = 0.0;
     double playerZ = 0.0;
+    double velocityX = 0.0;
+    double velocityY = 0.0;
+    double velocityZ = 0.0;
+    double playerBodyYaw = 0.0;
     double playerYaw = 0.0;
     double playerPitch = 0.0;
+    double cameraHeight = 0.0;
     double moveForward = 0.0;
     double moveStrafe = 0.0;
+    double horizontalSpeed = 0.0;
     std::uint64_t shotsFired = 0;
     std::uint32_t catchUpSteps = 0;
+    CharacterStance stance = CharacterStance::Standing;
+    bool grounded = true;
+    bool sprinting = false;
     bool catchUpClamped = false;
 };
 
@@ -54,7 +75,7 @@ struct EngineDiagnostics {
 
 class EngineCore final {
 public:
-    static constexpr std::size_t kBlackBoxCapacity = 720; // ~12 s at 60 FPS.
+    static constexpr std::size_t kBlackBoxCapacity = 720;
 
     explicit EngineCore(EngineConfig config = {});
 
@@ -63,6 +84,8 @@ public:
     bool setActiveCombatants(std::uint32_t count);
     void setMovementInput(double forward, double strafe);
     void addLookInput(double yawDeltaRadians, double pitchDeltaRadians);
+    void setSprintHeld(bool held);
+    void cycleStance();
     void triggerFire();
 
     [[nodiscard]] const EngineSnapshot& snapshot() const noexcept { return state_; }
@@ -74,14 +97,17 @@ public:
 
 #ifdef METSE_TESTING
     bool testOnlyExecuteInvariantViolation();
+    void testOnlySetAirborne(double heightMeters, double verticalVelocity) noexcept;
 #endif
 
 private:
     struct MutationCheckpoint {
         EngineSnapshot state{};
+        CharacterMotor characterMotor{};
         double accumulatorSeconds = 0.0;
         double moveForward = 0.0;
         double moveStrafe = 0.0;
+        bool sprintHeld = false;
     };
 
     template <typename Apply>
@@ -95,13 +121,16 @@ private:
             return false;
         }
 
-        const MutationCheckpoint checkpoint{state_, accumulatorSeconds_, moveForward_, moveStrafe_};
+        const MutationCheckpoint checkpoint{state_, characterMotor_, accumulatorSeconds_, moveForward_, moveStrafe_, sprintHeld_};
         apply();
+        syncCharacterSnapshot();
         if (!validateInvariants()) {
             state_ = checkpoint.state;
+            characterMotor_ = checkpoint.characterMotor;
             accumulatorSeconds_ = checkpoint.accumulatorSeconds;
             moveForward_ = checkpoint.moveForward;
             moveStrafe_ = checkpoint.moveStrafe;
+            sprintHeld_ = checkpoint.sprintHeld;
             integrity_.rollback(commandId, state_.simulationTick);
             return false;
         }
@@ -113,6 +142,7 @@ private:
 
     void resetState() noexcept;
     void fixedStep() noexcept;
+    void syncCharacterSnapshot() noexcept;
     bool validateInvariants() const noexcept;
     void recordBlackBox(double realDeltaSeconds,
                         std::uint32_t catchUpSteps,
@@ -120,9 +150,11 @@ private:
 
     EngineConfig config_{};
     EngineSnapshot state_{};
+    CharacterMotor characterMotor_{};
     double accumulatorSeconds_ = 0.0;
     double moveForward_ = 0.0;
     double moveStrafe_ = 0.0;
+    bool sprintHeld_ = false;
     IntegrityCore integrity_{};
     std::array<BlackBoxFrame, kBlackBoxCapacity> blackBox_{};
     std::size_t blackBoxWrite_ = 0;

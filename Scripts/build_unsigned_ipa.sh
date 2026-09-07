@@ -24,8 +24,8 @@ python3 - "$PLIST" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as f:
     p = plistlib.load(f)
-assert p.get('CFBundleShortVersionString') == '0.1.3', p.get('CFBundleShortVersionString')
-assert p.get('CFBundleVersion') == '5', p.get('CFBundleVersion')
+assert p.get('CFBundleShortVersionString') == '0.1.4', p.get('CFBundleShortVersionString')
+assert p.get('CFBundleVersion') == '6', p.get('CFBundleVersion')
 assert p.get('UIDeviceFamily') == [1], p.get('UIDeviceFamily')
 assert p.get('UILaunchStoryboardName') == 'LaunchScreen', p.get('UILaunchStoryboardName')
 assert 'UILaunchScreen' not in p, p.get('UILaunchScreen')
@@ -52,10 +52,13 @@ BINARY="$APP/METSE"
 INTEGRITY_OBJECT="$(find "$OUT/DerivedData/Build/Intermediates.noindex" -type f -name 'METSEIntegrityCore.o' -print -quit)"
 [[ -n "$INTEGRITY_OBJECT" ]] || { echo "METSEIntegrityCore.o missing from Release intermediates" >&2; exit 34; }
 echo "Runtime Integrity compile evidence: PASS ($INTEGRITY_OBJECT)"
+CHARACTER_OBJECT="$(find "$OUT/DerivedData/Build/Intermediates.noindex" -type f -name 'METSECharacterMotor.o' -print -quit)"
+[[ -n "$CHARACTER_OBJECT" ]] || { echo "METSECharacterMotor.o missing from Release intermediates" >&2; exit 35; }
+echo "Character Motor compile evidence: PASS ($CHARACTER_OBJECT)"
 
 mkdir -p "$OUT/Payload"
 cp -R "$APP" "$OUT/Payload/METSE.app"
-(cd "$OUT" && zip -qry METSE_v0.1.3_build005_unsigned.ipa Payload)
-unzip -t "$OUT/METSE_v0.1.3_build005_unsigned.ipa" >/dev/null
-shasum -a 256 "$OUT/METSE_v0.1.3_build005_unsigned.ipa" > "$OUT/METSE_v0.1.3_build005_unsigned.ipa.sha256"
-echo "Unsigned IPA Build 005: PASS"
+(cd "$OUT" && zip -qry METSE_v0.1.4_build006_unsigned.ipa Payload)
+unzip -t "$OUT/METSE_v0.1.4_build006_unsigned.ipa" >/dev/null
+shasum -a 256 "$OUT/METSE_v0.1.4_build006_unsigned.ipa" > "$OUT/METSE_v0.1.4_build006_unsigned.ipa.sha256"
+echo "Unsigned IPA Build 006: PASS"

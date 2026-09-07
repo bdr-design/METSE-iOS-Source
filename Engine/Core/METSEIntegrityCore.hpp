@@ -20,7 +20,9 @@ enum class CommandKind : std::uint8_t {
     SetActiveCombatants,
     SetMovementIntent,
     AddLookIntent,
-    FireWeapon
+    FireWeapon,
+    SetSprintIntent,
+    CycleStance
 };
 
 enum class CommandStatus : std::uint8_t {
@@ -40,7 +42,10 @@ enum class EventKind : std::uint8_t {
     CombatantCountChanged,
     MovementIntentChanged,
     LookIntentChanged,
-    ShotFired
+    ShotFired,
+    SprintIntentChanged,
+    StanceChanged,
+    SimulationInvariantRolledBack
 };
 
 struct CommandRecord {
