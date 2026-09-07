@@ -30,6 +30,7 @@ struct METSEFrameUniforms {
     uint64_t _lastRenderedShot;
     float _muzzleFlash;
     os_unfair_lock _telemetryLock;
+    os_unfair_lock _coreLock;
     uint64_t _renderedFrames;
     uint64_t _drawableMisses;
     double _renderCpuTotalMilliseconds;
@@ -43,6 +44,7 @@ struct METSEFrameUniforms {
     _metalView = view;
     _lastFrameTime = CACurrentMediaTime();
     _telemetryLock = OS_UNFAIR_LOCK_INIT;
+    _coreLock = OS_UNFAIR_LOCK_INIT;
 
     id<MTLDevice> device = view.device ?: MTLCreateSystemDefaultDevice();
     NSAssert(device != nil, @"METSE requires Metal");
@@ -84,15 +86,42 @@ struct METSEFrameUniforms {
 - (void)stop {
     _running = NO;
     self.metalView.paused = YES;
+    os_unfair_lock_lock(&_coreLock);
     _core.setMovementInput(0, 0);
     _core.setSprintHeld(false);
+    os_unfair_lock_unlock(&_coreLock);
 }
 
-- (void)setMoveForward:(float)forward strafe:(float)strafe { _core.setMovementInput(forward, strafe); }
-- (void)addLookYaw:(float)yaw pitch:(float)pitch { _core.addLookInput(yaw, pitch); }
-- (void)setSprintHeld:(BOOL)held { _core.setSprintHeld(held); }
-- (void)cycleStance { _core.cycleStance(); }
-- (void)triggerFire { _core.triggerFire(); _muzzleFlash = 1.0f; }
+- (void)setMoveForward:(float)forward strafe:(float)strafe {
+    os_unfair_lock_lock(&_coreLock);
+    _core.setMovementInput(forward, strafe);
+    os_unfair_lock_unlock(&_coreLock);
+}
+
+- (void)addLookYaw:(float)yaw pitch:(float)pitch {
+    os_unfair_lock_lock(&_coreLock);
+    _core.addLookInput(yaw, pitch);
+    os_unfair_lock_unlock(&_coreLock);
+}
+
+- (void)setSprintHeld:(BOOL)held {
+    os_unfair_lock_lock(&_coreLock);
+    _core.setSprintHeld(held);
+    os_unfair_lock_unlock(&_coreLock);
+}
+
+- (void)cycleStance {
+    os_unfair_lock_lock(&_coreLock);
+    _core.cycleStance();
+    os_unfair_lock_unlock(&_coreLock);
+}
+
+- (void)triggerFire {
+    os_unfair_lock_lock(&_coreLock);
+    _core.triggerFire();
+    os_unfair_lock_unlock(&_coreLock);
+    _muzzleFlash = 1.0f;
+}
 
 static NSString *METSEStanceName(metse::CharacterStance stance) {
     switch (stance) {
@@ -117,8 +146,10 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
 }
 
 - (NSString *)statusString {
-    const auto &state = _core.snapshot();
+    os_unfair_lock_lock(&_coreLock);
+    const auto state = _core.snapshot();
     const auto diagnostics = _core.diagnostics();
+    os_unfair_lock_unlock(&_coreLock);
     NSString *journal = diagnostics.journalValid ? @"JRN OK" : @"JRN FAIL";
     return [NSString stringWithFormat:@"%@ • %@ %.1fm/s • %.1f, %.1f • %@ • COL %llu • BB %llu",
             METSEStanceName(state.stance),
@@ -132,9 +163,11 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
 }
 
 - (NSDictionary<NSString *, id> *)observatorySnapshot {
-    const auto &state = _core.snapshot();
+    os_unfair_lock_lock(&_coreLock);
+    const auto state = _core.snapshot();
     const auto diagnostics = _core.diagnostics();
-    const auto &observatory = diagnostics.observatory;
+    os_unfair_lock_unlock(&_coreLock);
+    const auto observatory = diagnostics.observatory;
     const auto head = metse::sha256Hex(diagnostics.journalHead);
 
     os_unfair_lock_lock(&_telemetryLock);
@@ -234,7 +267,13 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
 
     const CFTimeInterval frameStart = CACurrentMediaTime();
     const CFTimeInterval now = frameStart;
+    os_unfair_lock_lock(&_coreLock);
     _core.advance(now - _lastFrameTime);
+    const auto state = _core.snapshot();
+    const auto world = _core.worldCollision();
+    const auto obstacles = _core.worldObstacles();
+    const std::size_t obstacleCount = _core.worldObstacleCount();
+    os_unfair_lock_unlock(&_coreLock);
     _lastFrameTime = now;
 
     MTLRenderPassDescriptor *pass = view.currentRenderPassDescriptor;
@@ -246,7 +285,6 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
         return;
     }
 
-    const auto &state = _core.snapshot();
     if (state.shotsFired != _lastRenderedShot) {
         _lastRenderedShot = state.shotsFired;
         _muzzleFlash = 1.0f;
@@ -258,11 +296,9 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
     uniforms.camera = (vector_float4){(float)state.playerX, (float)state.playerZ, (float)state.playerYaw, (float)state.playerPitch};
     uniforms.state = (vector_float4){(float)state.activeCombatants, (float)state.shotsFired, state.sprinting ? 1.0f : 0.0f, (float)static_cast<std::uint8_t>(state.stance)};
     uniforms.character = (vector_float4){(float)state.cameraHeight, (float)state.playerY, (float)state.horizontalSpeed, state.grounded ? 1.0f : 0.0f};
-    const auto &world = _core.worldCollision();
-    uniforms.worldMeta = (vector_float4){(float)_core.worldObstacleCount(), (float)world.minWorldX(), (float)world.maxWorldX(), (float)world.minWorldZ()};
+    uniforms.worldMeta = (vector_float4){(float)obstacleCount, (float)world.minWorldX(), (float)world.maxWorldX(), (float)world.minWorldZ()};
     uniforms.worldExtra = (vector_float4){(float)world.maxWorldZ(), (float)state.cameraRoll, 0.0f, 0.0f};
 
-    const auto &obstacles = _core.worldObstacles();
     float heights[metse::WorldCollisionCore::kMaxObstacles] = {};
     for (std::size_t i = 0; i < metse::WorldCollisionCore::kMaxObstacles; ++i) {
         uniforms.obstacles[i] = (vector_float4){(float)obstacles[i].minX, (float)obstacles[i].minZ, (float)obstacles[i].maxX, (float)obstacles[i].maxZ};
