@@ -4,11 +4,18 @@ import MetalKit
 final class GameViewController: UIViewController {
     private var engine: METSEEngineBridge?
     private var statusTimer: Timer?
+
     private let statusLabel = UILabel()
     private let leftPad = UIView()
     private let rightPad = UIView()
+    private let joystickBase = UIView()
+    private let joystickKnob = UIView()
     private var leftStart = CGPoint.zero
     private var rightLast = CGPoint.zero
+    private let joystickRadius: CGFloat = 52
+
+    private let stanceButton = UIButton(type: .system)
+    private let sprintButton = UIButton(type: .system)
 
     override var prefersStatusBarHidden: Bool { true }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
@@ -26,7 +33,6 @@ final class GameViewController: UIViewController {
         let metalView = MTKView(frame: .zero, device: device)
         metalView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(metalView)
-
         NSLayoutConstraint.activate([
             metalView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             metalView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -53,6 +59,7 @@ final class GameViewController: UIViewController {
         statusTimer = nil
         engine?.setMoveForward(0, strafe: 0)
         engine?.setSprintHeld(false)
+        resetJoystick(animated: false)
         if isMovingFromParent {
             engine?.stop()
         }
@@ -62,32 +69,23 @@ final class GameViewController: UIViewController {
         statusTimer?.invalidate()
     }
 
-    private func startStatusTimer() {
-        statusTimer?.invalidate()
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.refreshStatus()
-        }
-        if let statusTimer {
-            RunLoop.main.add(statusTimer, forMode: .common)
-        }
-    }
-
-    private func refreshStatus() {
-        statusLabel.text = engine?.statusString() ?? "ENGINE OFFLINE"
-    }
-
     private func configureHUD() {
-        let backButton = UIButton(type: .system)
-        backButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
-        backButton.tintColor = .white
-        backButton.backgroundColor = UIColor.black.withAlphaComponent(0.34)
-        backButton.layer.cornerRadius = 22
+        let backButton = makeRoundButton(symbol: "chevron.backward", size: 44)
+        backButton.backgroundColor = UIColor.black.withAlphaComponent(0.36)
         backButton.accessibilityLabel = "رجوع"
         backButton.addAction(UIAction { [weak self] _ in
             self?.navigationController?.popViewController(animated: true)
         }, for: .touchUpInside)
 
-        statusLabel.text = "ENGINE ONLINE • CHARACTER MOTOR"
+        let observatoryButton = makeRoundButton(symbol: "waveform.path.ecg", size: 44)
+        observatoryButton.backgroundColor = UIColor(red: 0.08, green: 0.27, blue: 0.22, alpha: 0.86)
+        observatoryButton.accessibilityLabel = "مركز الأرصاد"
+        observatoryButton.addAction(UIAction { [weak self] _ in
+            guard let self, let engine = self.engine else { return }
+            self.present(ObservatoryViewController(engine: engine), animated: true)
+        }, for: .touchUpInside)
+
+        statusLabel.text = "ENGINE ONLINE • BUILD 007"
         statusLabel.font = .monospacedSystemFont(ofSize: 8.5, weight: .semibold)
         statusLabel.textColor = UIColor(red: 0.55, green: 0.92, blue: 0.75, alpha: 1)
         statusLabel.backgroundColor = UIColor.black.withAlphaComponent(0.34)
@@ -95,7 +93,7 @@ final class GameViewController: UIViewController {
         statusLabel.layer.cornerRadius = 10
         statusLabel.layer.masksToBounds = true
         statusLabel.adjustsFontSizeToFitWidth = true
-        statusLabel.minimumScaleFactor = 0.65
+        statusLabel.minimumScaleFactor = 0.58
 
         let fireButton = makeRoundButton(symbol: "scope", size: 68)
         fireButton.backgroundColor = UIColor(red: 0.72, green: 0.18, blue: 0.10, alpha: 0.78)
@@ -104,24 +102,10 @@ final class GameViewController: UIViewController {
             self?.engine?.triggerFire()
         }, for: .touchUpInside)
 
-        let sprintButton = makeRoundButton(symbol: "figure.run", size: 58)
-        sprintButton.backgroundColor = UIColor.black.withAlphaComponent(0.46)
-        sprintButton.accessibilityLabel = "ركض سريع"
-        sprintButton.addAction(UIAction { [weak self] _ in
-            self?.engine?.setSprintHeld(true)
-        }, for: .touchDown)
-        sprintButton.addAction(UIAction { [weak self] _ in
-            self?.engine?.setSprintHeld(false)
-        }, for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+        configureSprintButton()
+        configureStanceButton()
 
-        let stanceButton = makeRoundButton(symbol: "figure.stand", size: 58)
-        stanceButton.backgroundColor = UIColor.black.withAlphaComponent(0.46)
-        stanceButton.accessibilityLabel = "تغيير الوضعية"
-        stanceButton.addAction(UIAction { [weak self] _ in
-            self?.engine?.cycleStance()
-        }, for: .touchUpInside)
-
-        [backButton, statusLabel, fireButton, sprintButton, stanceButton].forEach {
+        [backButton, observatoryButton, statusLabel, fireButton, sprintButton, stanceButton].forEach {
             view.addSubview($0)
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
@@ -132,7 +116,12 @@ final class GameViewController: UIViewController {
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
 
-            statusLabel.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 10),
+            observatoryButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 8),
+            observatoryButton.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
+            observatoryButton.widthAnchor.constraint(equalToConstant: 44),
+            observatoryButton.heightAnchor.constraint(equalToConstant: 44),
+
+            statusLabel.leadingAnchor.constraint(equalTo: observatoryButton.trailingAnchor, constant: 8),
             statusLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
             statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 360),
             statusLabel.heightAnchor.constraint(equalToConstant: 30),
@@ -154,6 +143,34 @@ final class GameViewController: UIViewController {
         ])
     }
 
+    private func configureSprintButton() {
+        sprintButton.setImage(UIImage(systemName: "figure.run"), for: .normal)
+        sprintButton.tintColor = .white
+        sprintButton.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+        sprintButton.layer.cornerRadius = 29
+        sprintButton.accessibilityLabel = "ركض سريع"
+        sprintButton.addAction(UIAction { [weak self] _ in
+            self?.engine?.setSprintHeld(true)
+            self?.sprintButton.backgroundColor = UIColor(red: 0.17, green: 0.54, blue: 0.38, alpha: 0.88)
+        }, for: .touchDown)
+        sprintButton.addAction(UIAction { [weak self] _ in
+            self?.engine?.setSprintHeld(false)
+            self?.sprintButton.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+        }, for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+    }
+
+    private func configureStanceButton() {
+        stanceButton.setImage(UIImage(systemName: "figure.stand"), for: .normal)
+        stanceButton.tintColor = .white
+        stanceButton.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+        stanceButton.layer.cornerRadius = 29
+        stanceButton.accessibilityLabel = "تغيير الوضعية"
+        stanceButton.addAction(UIAction { [weak self] _ in
+            self?.engine?.cycleStance()
+            self?.refreshStatus()
+        }, for: .touchUpInside)
+    }
+
     private func makeRoundButton(symbol: String, size: CGFloat) -> UIButton {
         let button = UIButton(type: .system)
         button.setImage(UIImage(systemName: symbol), for: .normal)
@@ -167,7 +184,6 @@ final class GameViewController: UIViewController {
         rightPad.backgroundColor = .clear
         leftPad.translatesAutoresizingMaskIntoConstraints = false
         rightPad.translatesAutoresizingMaskIntoConstraints = false
-
         view.addSubview(leftPad)
         view.addSubview(rightPad)
 
@@ -183,26 +199,60 @@ final class GameViewController: UIViewController {
             rightPad.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.50)
         ])
 
+        configureJoystickVisuals()
         leftPad.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(movePan(_:))))
         rightPad.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(lookPan(_:))))
     }
 
+    private func configureJoystickVisuals() {
+        joystickBase.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        joystickBase.layer.borderWidth = 1
+        joystickBase.layer.borderColor = UIColor.white.withAlphaComponent(0.14).cgColor
+        joystickBase.layer.cornerRadius = joystickRadius
+        joystickBase.isUserInteractionEnabled = false
+        joystickBase.alpha = 0.22
+
+        joystickKnob.backgroundColor = UIColor(red: 0.42, green: 0.88, blue: 0.68, alpha: 0.24)
+        joystickKnob.layer.borderWidth = 1
+        joystickKnob.layer.borderColor = UIColor(red: 0.42, green: 0.88, blue: 0.68, alpha: 0.46).cgColor
+        joystickKnob.layer.cornerRadius = 24
+        joystickKnob.isUserInteractionEnabled = false
+
+        joystickBase.frame = CGRect(x: 48, y: max(40, view.bounds.height - 142), width: joystickRadius * 2, height: joystickRadius * 2)
+        joystickKnob.frame = CGRect(x: 0, y: 0, width: 48, height: 48)
+        joystickKnob.center = joystickBase.center
+        view.addSubview(joystickBase)
+        view.addSubview(joystickKnob)
+    }
+
     @objc private func movePan(_ gesture: UIPanGestureRecognizer) {
-        let point = gesture.location(in: leftPad)
+        let localPoint = gesture.location(in: leftPad)
+        let viewPoint = leftPad.convert(localPoint, to: view)
 
         if gesture.state == .began {
-            leftStart = point
+            leftStart = localPoint
+            joystickBase.center = viewPoint
+            joystickKnob.center = viewPoint
+            joystickBase.alpha = 0.55
+            joystickKnob.alpha = 1.0
         }
 
         if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
             engine?.setMoveForward(0, strafe: 0)
+            resetJoystick(animated: true)
             return
         }
 
-        let dx = Float((point.x - leftStart.x) / 70.0)
-        let dy = Float((point.y - leftStart.y) / 70.0)
-        let forward = max(-1, min(1, -dy))
-        let strafe = max(-1, min(1, dx))
+        let rawDX = localPoint.x - leftStart.x
+        let rawDY = localPoint.y - leftStart.y
+        let length = max(0.0001, sqrt(rawDX * rawDX + rawDY * rawDY))
+        let scale = min(1.0, joystickRadius / length)
+        let clampedDX = rawDX * scale
+        let clampedDY = rawDY * scale
+        joystickKnob.center = CGPoint(x: joystickBase.center.x + clampedDX, y: joystickBase.center.y + clampedDY)
+
+        let strafe = Float(clampedDX / joystickRadius)
+        let forward = Float(-clampedDY / joystickRadius)
         engine?.setMoveForward(forward, strafe: strafe)
     }
 
@@ -225,6 +275,41 @@ final class GameViewController: UIViewController {
         engine?.addLookYaw(dx, pitch: -dy)
     }
 
+    private func resetJoystick(animated: Bool) {
+        let changes = {
+            self.joystickKnob.center = self.joystickBase.center
+            self.joystickBase.alpha = 0.22
+            self.joystickKnob.alpha = 0.68
+        }
+        if animated {
+            UIView.animate(withDuration: 0.16, animations: changes)
+        } else {
+            changes()
+        }
+    }
+
+    private func startStatusTimer() {
+        statusTimer?.invalidate()
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+            self?.refreshStatus()
+        }
+        if let statusTimer {
+            RunLoop.main.add(statusTimer, forMode: .common)
+        }
+    }
+
+    private func refreshStatus() {
+        statusLabel.text = engine?.statusString() ?? "ENGINE OFFLINE"
+        guard let snapshot = engine?.observatorySnapshot(), let stance = snapshot["stance"] as? String else { return }
+        let symbol: String
+        switch stance {
+        case "CROUCH": symbol = "figure.strengthtraining.traditional"
+        case "PRONE": symbol = "figure.cooldown"
+        default: symbol = "figure.stand"
+        }
+        stanceButton.setImage(UIImage(systemName: symbol), for: .normal)
+    }
+
     private func showUnsupportedMetal() {
         let label = UILabel()
         label.text = "هذا الجهاز لا يدعم Metal المطلوب لتشغيل METSE."
@@ -233,7 +318,6 @@ final class GameViewController: UIViewController {
         label.numberOfLines = 0
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
-
         NSLayoutConstraint.activate([
             label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             label.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 30),

@@ -20,8 +20,8 @@ struct GatewayModule {
         .init(title: "التدريب", subtitle: "حركة، رماية، تكتيك", symbol: "scope", destination: .training),
         .init(title: "العمليات", subtitle: "المهام والجلسات", symbol: "map", destination: .operations),
         .init(title: "العتاد", subtitle: "الأسلحة والتجهيز", symbol: "shield.lefthalf.filled", destination: .loadout),
-        .init(title: "مركز التحديث", subtitle: "المحتوى وقنوات التطوير", symbol: "arrow.triangle.2.circlepath", destination: .updates),
+        .init(title: "مركز التحديث", subtitle: "مؤجل حتى اكتمال البناء الأساسي", symbol: "arrow.triangle.2.circlepath", destination: .updates),
         .init(title: "الإعدادات", subtitle: "العرض، الصوت، التحكم", symbol: "slider.horizontal.3", destination: .settings),
-        .init(title: "التشخيص", subtitle: "الأداء وسلامة المحرك", symbol: "waveform.path.ecg", destination: .diagnostics)
+        .init(title: "مركز الأرصاد", subtitle: "رصد الأداء، المحرك، التصادم والسلامة", symbol: "waveform.path.ecg", destination: .diagnostics)
     ]
 }

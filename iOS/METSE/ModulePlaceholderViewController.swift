@@ -26,7 +26,12 @@ final class ModulePlaceholderViewController: UIViewController {
         note.textColor = UIColor.white.withAlphaComponent(0.55)
         note.textAlignment = .center
         note.numberOfLines = 0
-        note.text = "هذه الوحدة محجوزة داخل بنية البوابة وجاهزة للتطوير بدون تغيير هيكل التنقل."
+        switch destination {
+        case .diagnostics:
+            note.text = "ابدأ جلسة تكتيكية ثم اضغط أيقونة الموجة أعلى الشاشة لفتح الرصد الحي ونسخ تقرير تقني كامل."
+        default:
+            note.text = "هذه الوحدة محجوزة داخل بنية البوابة وجاهزة للتطوير بدون تغيير هيكل التنقل."
+        }
 
         let stack = UIStackView(arrangedSubviews: [title, note])
         stack.axis = .vertical
@@ -46,7 +51,7 @@ final class ModulePlaceholderViewController: UIViewController {
         case .operations: return "العمليات"
         case .loadout: return "العتاد"
         case .settings: return "الإعدادات"
-        case .diagnostics: return "التشخيص"
+        case .diagnostics: return "مركز الأرصاد"
         case .game: return "اللعبة"
         case .updates: return "مركز التحديث"
         }
