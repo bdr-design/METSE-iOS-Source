@@ -2,6 +2,8 @@
 
 #include "METSECharacterMotor.hpp"
 #include "METSEIntegrityCore.hpp"
+#include "METSEObservatoryCore.hpp"
+#include "METSEWorldCollision.hpp"
 
 #include <array>
 #include <cstddef>
@@ -32,11 +34,14 @@ struct EngineSnapshot {
     double playerYaw = 0.0;
     double playerPitch = 0.0;
     double cameraHeight = 1.64;
+    double cameraRoll = 0.0;
     double horizontalSpeed = 0.0;
     CharacterStance stance = CharacterStance::Standing;
+    CharacterGait gait = CharacterGait::Idle;
     bool grounded = true;
     bool sprinting = false;
     std::uint64_t shotsFired = 0;
+    std::uint64_t collisionContacts = 0;
 };
 
 struct BlackBoxFrame {
@@ -53,12 +58,15 @@ struct BlackBoxFrame {
     double playerYaw = 0.0;
     double playerPitch = 0.0;
     double cameraHeight = 0.0;
+    double cameraRoll = 0.0;
     double moveForward = 0.0;
     double moveStrafe = 0.0;
     double horizontalSpeed = 0.0;
     std::uint64_t shotsFired = 0;
     std::uint32_t catchUpSteps = 0;
+    std::uint32_t collisionContacts = 0;
     CharacterStance stance = CharacterStance::Standing;
+    CharacterGait gait = CharacterGait::Idle;
     bool grounded = true;
     bool sprinting = false;
     bool catchUpClamped = false;
@@ -67,10 +75,16 @@ struct BlackBoxFrame {
 struct EngineDiagnostics {
     IntegrityMetrics integrity{};
     Sha256Digest journalHead{};
+    ObservatoryReport observatory{};
     std::size_t retainedEvents = 0;
     std::size_t retainedCommands = 0;
     std::size_t retainedBlackBoxFrames = 0;
+    std::size_t worldObstacleCount = 0;
+    std::uint64_t sessionCollisionContacts = 0;
+    std::uint64_t simulationInvariantRollbacks = 0;
     bool journalValid = false;
+    bool worldValid = false;
+    bool observatoryValid = false;
 };
 
 class EngineCore final {
@@ -92,8 +106,12 @@ public:
     [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
     [[nodiscard]] EngineDiagnostics diagnostics() const noexcept;
     [[nodiscard]] bool newestBlackBoxFrame(std::size_t offset, BlackBoxFrame& out) const noexcept;
+    [[nodiscard]] bool newestObservatoryFrame(std::size_t offset, ObservatoryFrame& out) const noexcept { return observatory_.newestFrame(offset, out); }
     [[nodiscard]] bool newestEvent(std::size_t offset, EventRecord& out) const noexcept { return integrity_.newestEvent(offset, out); }
     [[nodiscard]] bool newestCommand(std::size_t offset, CommandRecord& out) const noexcept { return integrity_.newestCommand(offset, out); }
+    [[nodiscard]] const std::array<WorldObstacle, WorldCollisionCore::kMaxObstacles>& worldObstacles() const noexcept { return worldCollision_.obstacles(); }
+    [[nodiscard]] std::size_t worldObstacleCount() const noexcept { return worldCollision_.obstacleCount(); }
+    [[nodiscard]] const WorldCollisionCore& worldCollision() const noexcept { return worldCollision_; }
 
 #ifdef METSE_TESTING
     bool testOnlyExecuteInvariantViolation();
@@ -146,11 +164,18 @@ private:
     bool validateInvariants() const noexcept;
     void recordBlackBox(double realDeltaSeconds,
                         std::uint32_t catchUpSteps,
-                        bool catchUpClamped) noexcept;
+                        bool catchUpClamped,
+                        std::uint32_t collisionContacts) noexcept;
+    void observeFrame(double realDeltaSeconds,
+                      std::uint32_t catchUpSteps,
+                      bool catchUpClamped,
+                      std::uint32_t collisionContacts) noexcept;
 
     EngineConfig config_{};
     EngineSnapshot state_{};
     CharacterMotor characterMotor_{};
+    WorldCollisionCore worldCollision_{};
+    ObservatoryCore observatory_{};
     double accumulatorSeconds_ = 0.0;
     double moveForward_ = 0.0;
     double moveStrafe_ = 0.0;
@@ -159,6 +184,9 @@ private:
     std::array<BlackBoxFrame, kBlackBoxCapacity> blackBox_{};
     std::size_t blackBoxWrite_ = 0;
     std::size_t blackBoxCount_ = 0;
+    std::uint64_t sessionCollisionContacts_ = 0;
+    std::uint64_t simulationInvariantRollbacks_ = 0;
+    std::uint32_t frameCollisionContacts_ = 0;
 };
 
 } // namespace metse

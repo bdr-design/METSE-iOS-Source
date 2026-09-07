@@ -17,14 +17,18 @@ double signOf(double value) noexcept {
 } // namespace
 
 CharacterMotor::CharacterMotor(CharacterConfig config) noexcept : config_(config) {
-    if (!positiveFinite(config_.jogSpeed)) config_.jogSpeed = 4.2;
-    if (!positiveFinite(config_.sprintSpeed)) config_.sprintSpeed = 6.4;
-    if (config_.sprintSpeed < config_.jogSpeed) config_.sprintSpeed = config_.jogSpeed;
-    if (!positiveFinite(config_.crouchSpeed)) config_.crouchSpeed = 2.1;
-    if (!positiveFinite(config_.proneSpeed)) config_.proneSpeed = 0.85;
-    if (!positiveFinite(config_.backwardMultiplier) || config_.backwardMultiplier > 1.0) config_.backwardMultiplier = 0.78;
-    if (!positiveFinite(config_.groundAcceleration)) config_.groundAcceleration = 16.0;
-    if (!positiveFinite(config_.groundDeceleration)) config_.groundDeceleration = 20.0;
+    if (!positiveFinite(config_.walkSpeed)) config_.walkSpeed = 1.55;
+    if (!positiveFinite(config_.tacticalSpeed)) config_.tacticalSpeed = 2.65;
+    if (!positiveFinite(config_.jogSpeed)) config_.jogSpeed = 4.15;
+    if (!positiveFinite(config_.sprintSpeed)) config_.sprintSpeed = 6.0;
+    config_.tacticalSpeed = std::max(config_.tacticalSpeed, config_.walkSpeed);
+    config_.jogSpeed = std::max(config_.jogSpeed, config_.tacticalSpeed);
+    config_.sprintSpeed = std::max(config_.sprintSpeed, config_.jogSpeed);
+    if (!positiveFinite(config_.crouchSpeed)) config_.crouchSpeed = 2.0;
+    if (!positiveFinite(config_.proneSpeed)) config_.proneSpeed = 0.82;
+    if (!positiveFinite(config_.backwardMultiplier) || config_.backwardMultiplier > 1.0) config_.backwardMultiplier = 0.76;
+    if (!positiveFinite(config_.groundAcceleration)) config_.groundAcceleration = 15.0;
+    if (!positiveFinite(config_.groundDeceleration)) config_.groundDeceleration = 19.0;
     if (!positiveFinite(config_.airAcceleration)) config_.airAcceleration = 3.0;
     if (!positiveFinite(config_.gravity)) config_.gravity = 18.0;
     if (!positiveFinite(config_.bodyTurnRate)) config_.bodyTurnRate = 3.6;
@@ -35,6 +39,7 @@ CharacterMotor::CharacterMotor(CharacterConfig config) noexcept : config_(config
     if (!positiveFinite(config_.crouchedEyeHeight) || config_.crouchedEyeHeight >= config_.standingEyeHeight) config_.crouchedEyeHeight = 1.08;
     if (!positiveFinite(config_.proneEyeHeight) || config_.proneEyeHeight >= config_.crouchedEyeHeight) config_.proneEyeHeight = 0.42;
     if (!positiveFinite(config_.eyeHeightTransitionSpeed)) config_.eyeHeightTransitionSpeed = 3.0;
+    if (!positiveFinite(config_.capsuleRadius) || config_.capsuleRadius > 0.8) config_.capsuleRadius = 0.34;
     reset();
 }
 
@@ -43,6 +48,7 @@ void CharacterMotor::reset() noexcept {
     state_.eyeHeight = config_.standingEyeHeight;
     state_.grounded = true;
     state_.stance = CharacterStance::Standing;
+    state_.gait = CharacterGait::Idle;
 }
 
 void CharacterMotor::addLookInput(double yawDeltaRadians, double pitchDeltaRadians) noexcept {
@@ -61,6 +67,35 @@ void CharacterMotor::cycleStance() noexcept {
         case CharacterStance::Prone: state_.stance = CharacterStance::Standing; break;
     }
     state_.sprinting = false;
+    state_.gait = CharacterGait::Idle;
+}
+
+void CharacterMotor::updateGait(double magnitude, double forward, bool sprintHeld) noexcept {
+    state_.sprinting = false;
+    if (magnitude <= 0.02) {
+        state_.gait = CharacterGait::Idle;
+        return;
+    }
+
+    if (state_.stance == CharacterStance::Crouched) {
+        state_.gait = CharacterGait::Crouch;
+        return;
+    }
+    if (state_.stance == CharacterStance::Prone) {
+        state_.gait = CharacterGait::Crawl;
+        return;
+    }
+
+    if (sprintHeld && forward > 0.35 && magnitude > 0.78) {
+        state_.sprinting = true;
+        state_.gait = CharacterGait::Sprint;
+    } else if (magnitude < 0.34) {
+        state_.gait = CharacterGait::Walk;
+    } else if (magnitude < 0.72) {
+        state_.gait = CharacterGait::Tactical;
+    } else {
+        state_.gait = CharacterGait::Jog;
+    }
 }
 
 void CharacterMotor::fixedStep(double dt, const CharacterInput& rawInput) noexcept {
@@ -83,28 +118,27 @@ void CharacterMotor::fixedStep(double dt, const CharacterInput& rawInput) noexce
         state_.viewYawOffset -= signedTurn;
     }
 
+    updateGait(magnitude, forward, rawInput.sprintHeld);
+
     double speedLimit = 0.0;
-    const bool hasMovement = magnitude > 0.0001;
-    switch (state_.stance) {
-        case CharacterStance::Standing:
-            state_.sprinting = rawInput.sprintHeld && forward > 0.35 && magnitude > 0.25;
-            speedLimit = state_.sprinting ? config_.sprintSpeed : config_.jogSpeed;
-            break;
-        case CharacterStance::Crouched:
-            state_.sprinting = false;
-            speedLimit = config_.crouchSpeed;
-            break;
-        case CharacterStance::Prone:
-            state_.sprinting = false;
-            speedLimit = config_.proneSpeed;
-            break;
+    switch (state_.gait) {
+        case CharacterGait::Idle: speedLimit = 0.0; break;
+        case CharacterGait::Walk: speedLimit = config_.walkSpeed; break;
+        case CharacterGait::Tactical: speedLimit = config_.tacticalSpeed; break;
+        case CharacterGait::Jog: speedLimit = config_.jogSpeed; break;
+        case CharacterGait::Sprint: speedLimit = config_.sprintSpeed; break;
+        case CharacterGait::Crouch: speedLimit = config_.crouchSpeed; break;
+        case CharacterGait::Crawl: speedLimit = config_.proneSpeed; break;
     }
     if (forward < -0.05) speedLimit *= config_.backwardMultiplier;
 
+    const bool hasMovement = magnitude > 0.02;
+    const double normalizedForward = hasMovement ? forward / magnitude : 0.0;
+    const double normalizedStrafe = hasMovement ? strafe / magnitude : 0.0;
     const double s = std::sin(state_.bodyYaw);
     const double c = std::cos(state_.bodyYaw);
-    const double targetVelocityX = hasMovement ? (s * forward + c * strafe) * speedLimit * magnitude : 0.0;
-    const double targetVelocityZ = hasMovement ? (c * forward - s * strafe) * speedLimit * magnitude : 0.0;
+    const double targetVelocityX = hasMovement ? (s * normalizedForward + c * normalizedStrafe) * speedLimit : 0.0;
+    const double targetVelocityZ = hasMovement ? (c * normalizedForward - s * normalizedStrafe) * speedLimit : 0.0;
     const double response = state_.grounded
         ? (hasMovement ? config_.groundAcceleration : config_.groundDeceleration)
         : config_.airAcceleration;
@@ -117,9 +151,11 @@ void CharacterMotor::fixedStep(double dt, const CharacterInput& rawInput) noexce
         state_.velocityY -= config_.gravity * dt;
         state_.y += state_.velocityY * dt;
         if (state_.y <= 0.0) {
+            const double landingSpeed = std::abs(state_.velocityY);
             state_.y = 0.0;
             state_.velocityY = 0.0;
             state_.grounded = true;
+            if (landingSpeed > 2.0) state_.landingOffset = -std::min(0.075, landingSpeed * 0.006);
         }
     } else {
         state_.y = 0.0;
@@ -132,10 +168,53 @@ void CharacterMotor::fixedStep(double dt, const CharacterInput& rawInput) noexce
     state_.eyeHeight = moveToward(state_.eyeHeight,
                                   targetEyeHeight(),
                                   config_.eyeHeightTransitionSpeed * dt);
+    state_.landingOffset = moveToward(state_.landingOffset, 0.0, 0.38 * dt);
+    updateCameraFeel(dt, strafe);
+}
+
+void CharacterMotor::applyHorizontalCollision(double correctedX,
+                                              double correctedZ,
+                                              bool hitX,
+                                              bool hitZ) noexcept {
+    if (!std::isfinite(correctedX) || !std::isfinite(correctedZ)) return;
+    state_.x = correctedX;
+    state_.z = correctedZ;
+    if (hitX) state_.velocityX = 0.0;
+    if (hitZ) state_.velocityZ = 0.0;
+}
+
+void CharacterMotor::updateCameraFeel(double dt, double strafe) noexcept {
+    const double speed = horizontalSpeed();
+    double bobAmplitude = 0.0;
+    double rollAmplitude = 0.0;
+    switch (state_.gait) {
+        case CharacterGait::Idle: break;
+        case CharacterGait::Walk: bobAmplitude = 0.010; rollAmplitude = 0.006; break;
+        case CharacterGait::Tactical: bobAmplitude = 0.016; rollAmplitude = 0.008; break;
+        case CharacterGait::Jog: bobAmplitude = 0.026; rollAmplitude = 0.012; break;
+        case CharacterGait::Sprint: bobAmplitude = 0.036; rollAmplitude = 0.017; break;
+        case CharacterGait::Crouch: bobAmplitude = 0.011; rollAmplitude = 0.006; break;
+        case CharacterGait::Crawl: bobAmplitude = 0.004; rollAmplitude = 0.003; break;
+    }
+
+    if (state_.grounded && speed > 0.12 && bobAmplitude > 0.0) {
+        state_.stepPhase = wrapAngle(state_.stepPhase + speed * dt * 2.15);
+        const double targetBob = std::sin(state_.stepPhase * 2.0) * bobAmplitude;
+        const double targetRoll = std::sin(state_.stepPhase) * rollAmplitude + std::clamp(strafe, -1.0, 1.0) * 0.008;
+        state_.cameraBobY = moveToward(state_.cameraBobY, targetBob, 0.35 * dt);
+        state_.cameraRoll = moveToward(state_.cameraRoll, targetRoll, 0.28 * dt);
+    } else {
+        state_.cameraBobY = moveToward(state_.cameraBobY, 0.0, 0.30 * dt);
+        state_.cameraRoll = moveToward(state_.cameraRoll, 0.0, 0.24 * dt);
+    }
 }
 
 double CharacterMotor::cameraYaw() const noexcept {
     return wrapAngle(state_.bodyYaw + state_.viewYawOffset);
+}
+
+double CharacterMotor::cameraHeight() const noexcept {
+    return std::max(0.20, state_.eyeHeight + state_.cameraBobY + state_.landingOffset);
 }
 
 double CharacterMotor::horizontalSpeed() const noexcept {
@@ -148,12 +227,19 @@ bool CharacterMotor::validate() const noexcept {
     if (!finite(state_.velocityX) || !finite(state_.velocityY) || !finite(state_.velocityZ)) return false;
     if (!finite(state_.bodyYaw) || !finite(state_.viewYawOffset) || !finite(state_.pitch)) return false;
     if (!finite(state_.eyeHeight) || state_.eyeHeight <= 0.0) return false;
+    if (!finite(state_.cameraBobY) || std::abs(state_.cameraBobY) > 0.12) return false;
+    if (!finite(state_.cameraRoll) || std::abs(state_.cameraRoll) > 0.08) return false;
+    if (!finite(state_.landingOffset) || state_.landingOffset > 0.000001 || state_.landingOffset < -0.10) return false;
+    if (!finite(state_.stepPhase)) return false;
     if (state_.y < -0.000001) return false;
     if (std::abs(state_.viewYawOffset) > config_.viewYawHardLimit + 0.000001) return false;
     if (std::abs(state_.pitch) > config_.maxPitch + 0.000001) return false;
-    if (state_.sprinting && state_.stance != CharacterStance::Standing) return false;
+    if (state_.sprinting && (state_.stance != CharacterStance::Standing || state_.gait != CharacterGait::Sprint)) return false;
     const auto stanceValue = static_cast<std::uint8_t>(state_.stance);
+    const auto gaitValue = static_cast<std::uint8_t>(state_.gait);
     if (stanceValue > static_cast<std::uint8_t>(CharacterStance::Prone)) return false;
+    if (gaitValue > static_cast<std::uint8_t>(CharacterGait::Crawl)) return false;
+    if (!positiveFinite(config_.capsuleRadius)) return false;
     return true;
 }
 

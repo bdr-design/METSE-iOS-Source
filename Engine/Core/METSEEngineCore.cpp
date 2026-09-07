@@ -21,6 +21,7 @@ EngineCore::EngineCore(EngineConfig config)
     config_.maxCombatants = std::clamp<std::uint32_t>(config_.maxCombatants, 1, 32);
     config_.character = characterMotor_.config();
     resetState();
+    observatory_.reset();
     integrity_.appendSystemEvent(EventKind::EngineBoot, state_.simulationTick);
 }
 
@@ -35,9 +36,19 @@ void EngineCore::resetState() noexcept {
 }
 
 void EngineCore::reset() {
-    executeAtomic(CommandKind::ResetSession, true, EventKind::SessionReset, [this] {
+    const bool committed = executeAtomic(CommandKind::ResetSession, true, EventKind::SessionReset, [this] {
         resetState();
     });
+    if (committed) {
+        observatory_.reset();
+        sessionCollisionContacts_ = 0;
+        simulationInvariantRollbacks_ = 0;
+        frameCollisionContacts_ = 0;
+        state_.collisionContacts = 0;
+        blackBox_ = {};
+        blackBoxWrite_ = 0;
+        blackBoxCount_ = 0;
+    }
 }
 
 bool EngineCore::setActiveCombatants(std::uint32_t count) {
@@ -78,9 +89,10 @@ void EngineCore::triggerFire() {
 }
 
 void EngineCore::advance(double realDeltaSeconds) {
+    frameCollisionContacts_ = 0;
     if (!std::isfinite(realDeltaSeconds) || realDeltaSeconds <= 0.0) {
         state_.interpolationAlpha = std::clamp(accumulatorSeconds_ / config_.fixedStepSeconds, 0.0, 1.0);
-        recordBlackBox(0.0, 0, false);
+        recordBlackBox(0.0, 0, false, 0);
         return;
     }
 
@@ -101,19 +113,34 @@ void EngineCore::advance(double realDeltaSeconds) {
         backlogClamped = true;
     }
 
+    const bool clamped = inputClamped || backlogClamped;
     state_.interpolationAlpha = std::clamp(accumulatorSeconds_ / config_.fixedStepSeconds, 0.0, 1.0);
-    recordBlackBox(realDeltaSeconds, steps, inputClamped || backlogClamped);
+    recordBlackBox(realDeltaSeconds, steps, clamped, frameCollisionContacts_);
+    observeFrame(realDeltaSeconds, steps, clamped, frameCollisionContacts_);
 }
 
 void EngineCore::fixedStep() noexcept {
     const EngineSnapshot stateCheckpoint = state_;
     const CharacterMotor characterCheckpoint = characterMotor_;
 
+    const double previousX = characterMotor_.state().x;
+    const double previousZ = characterMotor_.state().z;
+
     CharacterInput input{};
     input.forward = moveForward_;
     input.strafe = moveStrafe_;
     input.sprintHeld = sprintHeld_;
     characterMotor_.fixedStep(config_.fixedStepSeconds, input);
+
+    const auto collision = worldCollision_.resolve(previousX,
+                                                   previousZ,
+                                                   characterMotor_.state().x,
+                                                   characterMotor_.state().z,
+                                                   characterMotor_.config().capsuleRadius);
+    characterMotor_.applyHorizontalCollision(collision.x, collision.z, collision.hitX, collision.hitZ);
+    frameCollisionContacts_ += collision.contacts;
+    sessionCollisionContacts_ += collision.contacts;
+
     state_.simulationSeconds += config_.fixedStepSeconds;
     ++state_.simulationTick;
     syncCharacterSnapshot();
@@ -121,6 +148,7 @@ void EngineCore::fixedStep() noexcept {
     if (!validateInvariants()) {
         state_ = stateCheckpoint;
         characterMotor_ = characterCheckpoint;
+        ++simulationInvariantRollbacks_;
         integrity_.appendSystemEvent(EventKind::SimulationInvariantRolledBack, state_.simulationTick);
     }
 }
@@ -136,11 +164,14 @@ void EngineCore::syncCharacterSnapshot() noexcept {
     state_.playerBodyYaw = character.bodyYaw;
     state_.playerYaw = characterMotor_.cameraYaw();
     state_.playerPitch = character.pitch;
-    state_.cameraHeight = character.eyeHeight;
+    state_.cameraHeight = characterMotor_.cameraHeight();
+    state_.cameraRoll = character.cameraRoll;
     state_.horizontalSpeed = characterMotor_.horizontalSpeed();
     state_.stance = character.stance;
+    state_.gait = character.gait;
     state_.grounded = character.grounded;
     state_.sprinting = character.sprinting;
+    state_.collisionContacts = sessionCollisionContacts_;
 }
 
 bool EngineCore::validateInvariants() const noexcept {
@@ -155,6 +186,8 @@ bool EngineCore::validateInvariants() const noexcept {
     if (std::abs(moveForward_) > 1.0000001 || std::abs(moveStrafe_) > 1.0000001) return false;
     if (std::hypot(moveForward_, moveStrafe_) > 1.0000001) return false;
     if (!characterMotor_.validate()) return false;
+    if (!worldCollision_.validate()) return false;
+    if (!observatory_.validate()) return false;
 
     const auto& character = characterMotor_.state();
     if (!nearlyEqual(state_.playerX, character.x) ||
@@ -166,13 +199,18 @@ bool EngineCore::validateInvariants() const noexcept {
         !nearlyEqual(state_.playerBodyYaw, character.bodyYaw) ||
         !nearlyEqual(state_.playerYaw, characterMotor_.cameraYaw()) ||
         !nearlyEqual(state_.playerPitch, character.pitch) ||
-        !nearlyEqual(state_.cameraHeight, character.eyeHeight) ||
+        !nearlyEqual(state_.cameraHeight, characterMotor_.cameraHeight()) ||
+        !nearlyEqual(state_.cameraRoll, character.cameraRoll) ||
         !nearlyEqual(state_.horizontalSpeed, characterMotor_.horizontalSpeed())) return false;
-    if (state_.stance != character.stance || state_.grounded != character.grounded || state_.sprinting != character.sprinting) return false;
+    if (state_.stance != character.stance || state_.gait != character.gait ||
+        state_.grounded != character.grounded || state_.sprinting != character.sprinting) return false;
     return true;
 }
 
-void EngineCore::recordBlackBox(double realDeltaSeconds, std::uint32_t catchUpSteps, bool catchUpClamped) noexcept {
+void EngineCore::recordBlackBox(double realDeltaSeconds,
+                                std::uint32_t catchUpSteps,
+                                bool catchUpClamped,
+                                std::uint32_t collisionContacts) noexcept {
     BlackBoxFrame frame{};
     frame.simulationTick = state_.simulationTick;
     frame.simulationSeconds = state_.simulationSeconds;
@@ -187,12 +225,15 @@ void EngineCore::recordBlackBox(double realDeltaSeconds, std::uint32_t catchUpSt
     frame.playerYaw = state_.playerYaw;
     frame.playerPitch = state_.playerPitch;
     frame.cameraHeight = state_.cameraHeight;
+    frame.cameraRoll = state_.cameraRoll;
     frame.moveForward = moveForward_;
     frame.moveStrafe = moveStrafe_;
     frame.horizontalSpeed = state_.horizontalSpeed;
     frame.shotsFired = state_.shotsFired;
     frame.catchUpSteps = catchUpSteps;
+    frame.collisionContacts = collisionContacts;
     frame.stance = state_.stance;
+    frame.gait = state_.gait;
     frame.grounded = state_.grounded;
     frame.sprinting = state_.sprinting;
     frame.catchUpClamped = catchUpClamped;
@@ -202,14 +243,40 @@ void EngineCore::recordBlackBox(double realDeltaSeconds, std::uint32_t catchUpSt
     blackBoxCount_ = std::min(blackBoxCount_ + 1, kBlackBoxCapacity);
 }
 
+void EngineCore::observeFrame(double realDeltaSeconds,
+                              std::uint32_t catchUpSteps,
+                              bool catchUpClamped,
+                              std::uint32_t collisionContacts) noexcept {
+    ObservatoryFrameInput input{};
+    input.simulationTick = state_.simulationTick;
+    input.realDeltaSeconds = realDeltaSeconds;
+    input.playerX = state_.playerX;
+    input.playerZ = state_.playerZ;
+    input.horizontalSpeed = state_.horizontalSpeed;
+    input.stance = state_.stance;
+    input.gait = state_.gait;
+    input.grounded = state_.grounded;
+    input.sprinting = state_.sprinting;
+    input.catchUpSteps = catchUpSteps;
+    input.catchUpClamped = catchUpClamped;
+    input.collisionContacts = collisionContacts;
+    observatory_.observe(input);
+}
+
 EngineDiagnostics EngineCore::diagnostics() const noexcept {
     EngineDiagnostics out{};
     out.integrity = integrity_.metrics();
     out.journalHead = integrity_.journalHead();
+    out.observatory = observatory_.report();
     out.retainedEvents = integrity_.eventCount();
     out.retainedCommands = integrity_.commandCount();
     out.retainedBlackBoxFrames = blackBoxCount_;
+    out.worldObstacleCount = worldCollision_.obstacleCount();
+    out.sessionCollisionContacts = sessionCollisionContacts_;
+    out.simulationInvariantRollbacks = simulationInvariantRollbacks_;
     out.journalValid = integrity_.verifyJournal();
+    out.worldValid = worldCollision_.validate();
+    out.observatoryValid = observatory_.validate();
     return out;
 }
 
