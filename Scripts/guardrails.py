@@ -27,6 +27,18 @@ if ipa_workflow.exists():
     wf=ipa_workflow.read_text(errors='ignore')
     require('workflow_dispatch:' in wf,'iOS IPA build must remain explicitly dispatchable')
     require('\n  push:' not in wf and '\npush:' not in wf,'iOS IPA build must not run automatically on push')
+    require('runs-on: macos-15' in wf,'iOS IPA build must use GitHub-hosted macos-15')
+    require('ENGINE_ARCHIVE_URL' in wf and 'ENGINE_ARCHIVE_SHA256' in wf,'Hosted iOS build must bootstrap Unreal from a verified archive')
+    require('prepare_unreal_installed_build_macos.sh' in wf,'Hosted iOS build must run the Unreal bootstrap guard')
+
+bootstrap=ROOT/'Scripts/prepare_unreal_installed_build_macos.sh'
+require(bootstrap.exists(),'Verified Unreal Installed Build bootstrap script missing')
+if bootstrap.exists():
+    bt=bootstrap.read_text(errors='ignore')
+    require('https://' in bt,'Unreal bootstrap must require HTTPS')
+    require('shasum -a 256' in bt,'Unreal bootstrap must verify SHA-256')
+    require('RunUAT.sh' in bt,'Unreal bootstrap must validate RunUAT presence')
+    require('UnrealEditor' in bt,'Unreal bootstrap must validate UnrealEditor presence')
 
 update_cpp=(ROOT/'Source/METSE/Update/METSEUpdateCenterSubsystem.cpp'); require(update_cpp.exists(),'Update Center subsystem missing')
 if update_cpp.exists():
