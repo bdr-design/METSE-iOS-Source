@@ -1,16 +1,19 @@
 name: METSE iOS — Verified Unsigned IPA
+
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+
 permissions:
   contents: read
+
 jobs:
   verified-source:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash Scripts/static_checks.sh
+      - name: Verified source gates
+        run: bash Scripts/static_checks.sh
+
   ios-build:
     needs: verified-source
     runs-on: [self-hosted, macOS, ARM64]
