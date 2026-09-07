@@ -122,6 +122,8 @@ void EngineCore::advance(double realDeltaSeconds) {
 void EngineCore::fixedStep() noexcept {
     const EngineSnapshot stateCheckpoint = state_;
     const CharacterMotor characterCheckpoint = characterMotor_;
+    const std::uint64_t collisionContactsCheckpoint = sessionCollisionContacts_;
+    const std::uint32_t frameCollisionCheckpoint = frameCollisionContacts_;
 
     const double previousX = characterMotor_.state().x;
     const double previousZ = characterMotor_.state().z;
@@ -148,6 +150,8 @@ void EngineCore::fixedStep() noexcept {
     if (!validateInvariants()) {
         state_ = stateCheckpoint;
         characterMotor_ = characterCheckpoint;
+        sessionCollisionContacts_ = collisionContactsCheckpoint;
+        frameCollisionContacts_ = frameCollisionCheckpoint;
         ++simulationInvariantRollbacks_;
         integrity_.appendSystemEvent(EventKind::SimulationInvariantRolledBack, state_.simulationTick);
     }
@@ -187,7 +191,8 @@ bool EngineCore::validateInvariants() const noexcept {
     if (std::hypot(moveForward_, moveStrafe_) > 1.0000001) return false;
     if (!characterMotor_.validate()) return false;
     if (!worldCollision_.validate()) return false;
-    if (!observatory_.validate()) return false;
+    // Full Observatory validation scans the bounded telemetry window and is intentionally
+    // kept out of the 60 Hz simulation invariant path. diagnostics() performs that audit.
 
     const auto& character = characterMotor_.state();
     if (!nearlyEqual(state_.playerX, character.x) ||
