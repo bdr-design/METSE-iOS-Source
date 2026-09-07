@@ -1,19 +1,33 @@
-# METSE V0.1 — المعمارية
+# METSE Architecture — Native Shell / Independent Engine
 
-## نطاق النسخة
-قاعدة تشغيلية لمحاكي تكتيكي iPhone-first بحد أقصى 32 مقاتلاً. لا MassEntity ولا محاكاة جيوش ضخمة.
+## الحدود الصلبة
 
-## مبادئ ثابتة
-- اللاعب والاشتباك القريب أعلى أولوية.
-- Server authoritative لأي حالة قتالية مشتركة.
-- لا Tick عشوائي.
-- كل نظام له fallback وميزانية.
-- لا Lumen/Nanite في baseline المحمول.
-- جلسة 120 دقيقة هي معيار الأداء لاحقاً على جهاز فعلي.
+### App Shell
+يعرض Gateway، Settings، Update Center، Diagnostics، ويقرر متى يدخل المستخدم جلسة اللعبة.
+لا يحسب ballistics أو AI أو damage.
 
-## طبقات V0.1
-1. Core: MovementIntent مضغوط شبكياً.
-2. Character: Pawn قابل للحركة بدون Tick مخصص.
-3. Combat: Health replication وسلطة الضرر على السيرفر.
-4. Performance: Governor + World budgets.
-5. CI: manifest + guardrails + Automation Tests + iOS build gate.
+### Engine Core
+C++ portable. يملك الزمن الثابت والحالة المستقبلية للـsimulation.
+لا يستورد UIKit/Metal/Foundation.
+
+### Apple Platform Adapter
+Objective-C++ فقط. يربط `MTKView` وMetal بالـEngine Core.
+هذه الطبقة هي المكان الوحيد المسموح له بعبور C++ ↔ Apple APIs.
+
+### Renderer
+Metal presentation. يأخذ snapshot/telemetry من المحرك ولا يصبح مصدر حقيقة للـgameplay.
+
+### Content
+JSON/data فقط. كل حزمة تحديث لها schema/sequence/hash. لا JavaScript ولا dylib ولا native code.
+
+## الأداء
+- هدف العرض 60 FPS.
+- Simulation fixed step = 60 Hz.
+- max catch-up = 4 steps لمنع spiral-of-death.
+- لا allocations دورية داخل hot simulation path في baseline.
+- عند الضغط الحراري لاحقًا نقلل presentation quality قبل gameplay correctness.
+
+## بوابة الدخول
+البوابة Native UIKit وليست login barrier.
+المسار الأساسي واضح: `ابدأ جلسة تكتيكية`.
+الخيارات الثانوية منظمة كوحدات قابلة للتوسع دون ازدحام الشاشة الرئيسية.

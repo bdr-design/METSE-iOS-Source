@@ -1,0 +1,14 @@
+{
+  "contentSchema": 1,
+  "contentVersion": "0.1.0-dev.1",
+  "sequence": 1,
+  "channel": "development",
+  "updateManifestURL": "",
+  "trustedUpdateHosts": [],
+  "engineTuning": {
+    "targetFPS": 60,
+    "fixedStepHz": 60,
+    "maxCatchUpSteps": 4,
+    "maxCombatants": 32
+  }
+}
