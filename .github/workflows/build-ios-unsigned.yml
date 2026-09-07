@@ -1,66 +1,33 @@
 name: METSE iOS — Native Metal Verified Unsigned IPA
-
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths:
-      - 'iOS/**'
-      - 'Engine/**'
-      - 'Shaders/**'
-      - 'Content/**'
-      - 'Scripts/**'
-      - 'Tests/**'
-      - 'project.yml'
-      - 'VERSION'
-      - 'BUILD'
-      - 'SOURCE_INTEGRITY_SHA256.txt'
-      - '.github/workflows/build-ios-unsigned.yml'
-
-permissions:
-  contents: read
-
-concurrency:
-  group: metse-native-ios-${{ github.ref }}
-  cancel-in-progress: true
-
+    paths: ['iOS/**','Engine/**','Shaders/**','Content/**','Scripts/**','Tests/**','project.yml','VERSION','BUILD','SOURCE_INTEGRITY_SHA256.txt','.github/workflows/build-ios-unsigned.yml']
+permissions: { contents: read }
+concurrency: { group: metse-native-ios-${{ github.ref }}, cancel-in-progress: true }
 jobs:
   build-ipa:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Source integrity
-        run: python3 Scripts/verify_integrity.py
-
-      - name: Architecture guardrails
-        run: python3 Scripts/guardrails.py
-
-      - name: C++ engine core tests
-        run: bash Scripts/test_engine_core.sh
-
+      - { name: Checkout, uses: actions/checkout@v4 }
+      - { name: Source integrity, run: python3 Scripts/verify_integrity.py }
+      - { name: Architecture guardrails, run: python3 Scripts/guardrails.py }
+      - { name: C++ engine core tests, run: bash Scripts/test_engine_core.sh }
       - name: Swift syntax
         run: |
           set -euo pipefail
-          while IFS= read -r file; do
-            xcrun swiftc -frontend -parse "$file"
-          done < <(find iOS -name '*.swift' -type f | sort)
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Build native unsigned IPA
-        run: bash Scripts/build_unsigned_ipa.sh
-
+          while IFS= read -r file; do xcrun swiftc -frontend -parse "$file"; done < <(find iOS -name '*.swift' -type f | sort)
+      - { name: Install XcodeGen, run: brew install xcodegen }
+      - { name: Build native unsigned IPA, run: bash Scripts/build_unsigned_ipa.sh }
       - name: Upload verified IPA
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-v0.1.0-build002-native-metal-unsigned
+          name: METSE-v0.1.1-build003-native-metal-unsigned
           if-no-files-found: error
           retention-days: 14
           path: |
-            .ci-output/METSE_v0.1.0_build002_unsigned.ipa
-            .ci-output/METSE_v0.1.0_build002_unsigned.ipa.sha256
+            .ci-output/METSE_v0.1.1_build003_unsigned.ipa
+            .ci-output/METSE_v0.1.1_build003_unsigned.ipa.sha256
             .ci-output/xcodebuild.log
