@@ -21,9 +21,14 @@ project = (ROOT / "project.yml").read_text(encoding="utf-8")
 workflow = (ROOT / ".github/workflows/build-ios-unsigned.yml").read_text(encoding="utf-8")
 require('runs-on: macos-15' in workflow, "iOS workflow must use GitHub-hosted macos-15")
 build_script = (ROOT / "Scripts/build_unsigned_ipa.sh").read_text(encoding="utf-8")
+test_script = (ROOT / "Scripts/test_engine_core.sh").read_text(encoding="utf-8")
 require("CODE_SIGNING_ALLOWED=NO" in build_script and "CODE_SIGNING_REQUIRED=NO" in build_script,
         "CI must build unsigned IPA")
 require("SWIFT_OBJC_BRIDGING_HEADER" in project, "Swift/Objective-C++ engine bridge contract missing")
+require(".ci-output" in build_script and ".ci-output" in test_script and ".ci-output" in workflow,
+        "All CI outputs must use the dedicated .ci-output workspace")
+require("build/" not in build_script and "build/" not in test_script and "build/" not in workflow,
+        "Lowercase build/ is forbidden because it collides with BUILD on case-insensitive macOS filesystems")
 
 core = "\n".join(p.read_text(errors="ignore") for p in (ROOT / "Engine/Core").glob("*") if p.is_file())
 for forbidden in ("UIKit", "MetalKit", "Foundation/Foundation.h", "MTLDevice", "MTKView"):

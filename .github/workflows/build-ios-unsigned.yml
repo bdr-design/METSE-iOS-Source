@@ -61,6 +61,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            build/METSE_v0.1.0_build002_unsigned.ipa
-            build/METSE_v0.1.0_build002_unsigned.ipa.sha256
-            build/xcodebuild.log
+            .ci-output/METSE_v0.1.0_build002_unsigned.ipa
+            .ci-output/METSE_v0.1.0_build002_unsigned.ipa.sha256
+            .ci-output/xcodebuild.log

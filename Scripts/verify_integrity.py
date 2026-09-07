@@ -4,7 +4,7 @@ import hashlib, sys
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "SOURCE_INTEGRITY_SHA256.txt"
-IGNORE_ROOTS = {".git", "build", "DerivedData", "__pycache__"}
+IGNORE_ROOTS = {".git", ".ci-output", "DerivedData", "__pycache__"}
 errors = []
 
 expected = {}
@@ -46,9 +46,5 @@ if errors:
     print("SOURCE INTEGRITY: FAIL")
     for error in errors:
         print(" -", error)
-    print("--- BEGIN ACTUAL SOURCE MANIFEST ---")
-    for rel, p in sorted(actual_files):
-        print(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {rel}")
-    print("--- END ACTUAL SOURCE MANIFEST ---")
     sys.exit(1)
 print(f"SOURCE INTEGRITY: PASS ({len(expected)} files)")
