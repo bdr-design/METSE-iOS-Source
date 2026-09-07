@@ -1,0 +1,37 @@
+name: METSE - Package Source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/package-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package exact tracked source
+        run: |
+          set -euo pipefail
+          git archive --format=zip --output=METSE_Source_v0.1.1_build003.zip HEAD
+          sha256sum METSE_Source_v0.1.1_build003.zip > METSE_Source_v0.1.1_build003.zip.sha256
+          git rev-parse HEAD > SOURCE_COMMIT.txt
+
+      - name: Upload source package
+        uses: actions/upload-artifact@v4
+        with:
+          name: METSE-source-v0.1.1-build003
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            METSE_Source_v0.1.1_build003.zip
+            METSE_Source_v0.1.1_build003.zip.sha256
+            SOURCE_COMMIT.txt
