@@ -18,7 +18,7 @@ for i, line in enumerate(MANIFEST.read_text(encoding="utf-8").splitlines(), 1):
         continue
     expected[rel] = digest.lower()
 
-actual = set()
+actual_files = []
 for p in ROOT.rglob("*"):
     if not p.is_file():
         continue
@@ -27,8 +27,9 @@ for p in ROOT.rglob("*"):
         continue
     if any(part in IGNORE_ROOTS for part in p.relative_to(ROOT).parts):
         continue
-    actual.add(rel)
+    actual_files.append((rel, p))
 
+actual = {rel for rel, _ in actual_files}
 for rel in sorted(actual - set(expected)):
     errors.append(f"unmanifested file: {rel}")
 for rel in sorted(set(expected) - actual):
@@ -45,5 +46,9 @@ if errors:
     print("SOURCE INTEGRITY: FAIL")
     for error in errors:
         print(" -", error)
+    print("--- BEGIN ACTUAL SOURCE MANIFEST ---")
+    for rel, p in sorted(actual_files):
+        print(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {rel}")
+    print("--- END ACTUAL SOURCE MANIFEST ---")
     sys.exit(1)
 print(f"SOURCE INTEGRITY: PASS ({len(expected)} files)")
