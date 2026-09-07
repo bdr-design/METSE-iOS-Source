@@ -16,22 +16,26 @@ jobs:
 
   ios-build:
     needs: verified-source
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 120
+    runs-on: macos-15
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare verified Unreal Installed Build
+        env:
+          ENGINE_ARCHIVE_URL: ${{ secrets.ENGINE_ARCHIVE_URL }}
+          ENGINE_ARCHIVE_SHA256: ${{ secrets.ENGINE_ARCHIVE_SHA256 }}
+        run: bash Scripts/prepare_unreal_installed_build_macos.sh
+
       - name: Preflight macOS, Xcode, Unreal and source integrity
-        env:
-          UE_ROOT: ${{ vars.UE_ROOT }}
         run: bash Scripts/ci_preflight_macos.sh
+
       - name: Unreal automation tests
-        env:
-          UE_ROOT: ${{ vars.UE_ROOT }}
         run: bash Scripts/run_unreal_tests_macos.sh
+
       - name: Build, cook, stage and create unsigned IPA
-        env:
-          UE_ROOT: ${{ vars.UE_ROOT }}
         run: bash Scripts/build_ios_unsigned_macos.sh
+
       - name: Upload verified artifacts
         uses: actions/upload-artifact@v4
         with:
