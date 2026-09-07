@@ -16,6 +16,14 @@ require('r.Nanite.ProjectEnabled=False' in eng,'Nanite must remain disabled for 
 require('r.DynamicGlobalIlluminationMethod=0' in eng,'Dynamic GI must remain disabled in baseline')
 require('MaxCombatants=32' in game,'Combatant hard cap must remain 32')
 require('TargetFPS=60' in game and 'ProtectionFPS=30' in game,'FPS guardrails missing')
+
+ipa_workflow=ROOT/'.github/workflows/build-ios-unsigned.yml'
+require(ipa_workflow.exists(),'Unsigned IPA workflow missing')
+if ipa_workflow.exists():
+    wf=ipa_workflow.read_text(errors='ignore')
+    require('workflow_dispatch:' in wf,'iOS IPA build must remain explicitly dispatchable')
+    require('\n  push:' not in wf and '\npush:' not in wf,'iOS IPA build must not run automatically on push')
+
 update_cpp=(ROOT/'Source/METSE/Update/METSEUpdateCenterSubsystem.cpp'); require(update_cpp.exists(),'Update Center subsystem missing')
 if update_cpp.exists():
     ut=update_cpp.read_text(errors='ignore')
