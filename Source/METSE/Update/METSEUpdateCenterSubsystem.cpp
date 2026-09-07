@@ -1,11 +1,13 @@
 #include "Update/METSEUpdateCenterSubsystem.h"
 
+#include "GenericPlatform/GenericPlatformHttp.h"
 #include "GenericPlatform/GenericPlatformMisc.h"
 #include "HAL/FileManager.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Json.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -17,6 +19,7 @@ namespace METSEUpdate
     static constexpr int64 MaxPackageBytes = 32ll * 1024ll * 1024ll;
     static constexpr int32 ActivePakOrder = 120;
     static constexpr int32 RollbackPakOrder = 130;
+    static constexpr double MaxExactJsonInteger = 9007199254740991.0;
 
     static bool IsSafeVersionString(const FString& Value)
     {
@@ -50,15 +53,16 @@ void UMETSEUpdateCenterSubsystem::Initialize(FSubsystemCollectionBase& Collectio
         return;
     }
 
-    // Last active package is unusable. Attempt the previous known-good package before falling back to base.
     if (!PreviousPakPath.IsEmpty() && IFileManager::Get().FileExists(*PreviousPakPath) && FCoreDelegates::MountPak.IsBound())
     {
         if (FCoreDelegates::MountPak.Execute(PreviousPakPath, METSEUpdate::RollbackPakOrder) != nullptr)
         {
             ActivePakPath = PreviousPakPath;
             ActiveContentVersion = PreviousContentVersion.IsEmpty() ? TEXT("previous") : PreviousContentVersion;
+            ActiveSequence = PreviousSequence;
             PreviousPakPath.Reset();
             PreviousContentVersion.Reset();
+            PreviousSequence = 0;
             SaveLocalState();
             SetState(EMETSEUpdateState::Active, FString::Printf(TEXT("Recovered previous content %s."), *ActiveContentVersion));
             return;
@@ -69,6 +73,8 @@ void UMETSEUpdateCenterSubsystem::Initialize(FSubsystemCollectionBase& Collectio
     PreviousPakPath.Reset();
     ActiveContentVersion = TEXT("base");
     PreviousContentVersion.Reset();
+    ActiveSequence = 0;
+    PreviousSequence = 0;
     SaveLocalState();
     SetState(EMETSEUpdateState::Failed, Error.IsEmpty() ? TEXT("Saved update could not be restored; using base content.") : Error);
 }
@@ -79,6 +85,49 @@ void UMETSEUpdateCenterSubsystem::SetState(const EMETSEUpdateState NewState, con
     OnStateChanged.Broadcast(State, Message);
 }
 
+bool UMETSEUpdateCenterSubsystem::IsTrustedHttpsUrl(const FString& Url, FString& OutError) const
+{
+    if (!Url.StartsWith(TEXT("https://"), ESearchCase::IgnoreCase))
+    {
+        OutError = TEXT("Update URL must use HTTPS.");
+        return false;
+    }
+
+    const FString Domain = FGenericPlatformHttp::GetUrlDomain(Url);
+    if (Domain.IsEmpty())
+    {
+        OutError = TEXT("Update URL domain is invalid.");
+        return false;
+    }
+
+    const TOptional<uint16> Port = FGenericPlatformHttp::GetUrlPort(Url);
+    if (Port.IsSet() && Port.GetValue() != 443)
+    {
+        OutError = TEXT("Update URL must use the standard HTTPS port.");
+        return false;
+    }
+
+    TArray<FString> TrustedHosts;
+    GConfig->GetArray(TEXT("METSEUpdate"), TEXT("TrustedHosts"), TrustedHosts, GGameIni);
+    if (TrustedHosts.IsEmpty())
+    {
+        OutError = TEXT("No trusted update hosts are configured.");
+        return false;
+    }
+
+    for (FString Host : TrustedHosts)
+    {
+        Host.TrimStartAndEndInline();
+        if (!Host.IsEmpty() && Domain.Equals(Host, ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+
+    OutError = FString::Printf(TEXT("Update host '%s' is not trusted."), *Domain);
+    return false;
+}
+
 void UMETSEUpdateCenterSubsystem::CheckForUpdates(const FString& ManifestUrl)
 {
     if (State == EMETSEUpdateState::Downloading || State == EMETSEUpdateState::Mounting)
@@ -86,9 +135,11 @@ void UMETSEUpdateCenterSubsystem::CheckForUpdates(const FString& ManifestUrl)
         SetState(EMETSEUpdateState::Failed, TEXT("Update operation already in progress."));
         return;
     }
-    if (!ManifestUrl.StartsWith(TEXT("https://"), ESearchCase::IgnoreCase))
+
+    FString UrlError;
+    if (!IsTrustedHttpsUrl(ManifestUrl, UrlError))
     {
-        SetState(EMETSEUpdateState::Failed, TEXT("Only HTTPS manifests are accepted."));
+        SetState(EMETSEUpdateState::Failed, UrlError);
         return;
     }
 
@@ -99,22 +150,23 @@ void UMETSEUpdateCenterSubsystem::CheckForUpdates(const FString& ManifestUrl)
     Request->SetTimeout(30.0f);
     Request->OnProcessRequestComplete().BindWeakLambda(this, [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
     {
-        if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() != 200 || !Response->GetURL().StartsWith(TEXT("https://"), ESearchCase::IgnoreCase))
+        if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() != 200)
         {
             SetState(EMETSEUpdateState::Failed, TEXT("Manifest download failed."));
             return;
         }
 
-        FMETSEUpdateManifest Parsed;
         FString Error;
-        if (!ParseManifest(Response->GetContentAsString(), Parsed, Error) || !ValidateManifest(Parsed, Error))
+        if (!IsTrustedHttpsUrl(Response->GetURL(), Error))
         {
             SetState(EMETSEUpdateState::Failed, Error);
             return;
         }
-        if (Parsed.UpdateVersion == ActiveContentVersion)
+
+        FMETSEUpdateManifest Parsed;
+        if (!ParseManifest(Response->GetContentAsString(), Parsed, Error) || !ValidateManifest(Parsed, Error))
         {
-            SetState(EMETSEUpdateState::Idle, TEXT("This content update is already active."));
+            SetState(EMETSEUpdateState::Failed, Error);
             return;
         }
 
@@ -132,11 +184,6 @@ void UMETSEUpdateCenterSubsystem::InstallLastCheckedUpdate()
         SetState(EMETSEUpdateState::Failed, Error);
         return;
     }
-    if (PendingManifest.UpdateVersion == ActiveContentVersion)
-    {
-        SetState(EMETSEUpdateState::Failed, TEXT("Update is already active."));
-        return;
-    }
     DownloadPackage();
 }
 
@@ -151,9 +198,16 @@ void UMETSEUpdateCenterSubsystem::DownloadPackage()
     Request->SetTimeout(120.0f);
     Request->OnProcessRequestComplete().BindWeakLambda(this, [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
     {
-        if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() != 200 || !Response->GetURL().StartsWith(TEXT("https://"), ESearchCase::IgnoreCase))
+        if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() != 200)
         {
             SetState(EMETSEUpdateState::Failed, TEXT("Package download failed."));
+            return;
+        }
+
+        FString Error;
+        if (!IsTrustedHttpsUrl(Response->GetURL(), Error))
+        {
+            SetState(EMETSEUpdateState::Failed, Error);
             return;
         }
 
@@ -170,7 +224,6 @@ void UMETSEUpdateCenterSubsystem::DownloadPackage()
         }
 
         SetState(EMETSEUpdateState::Verifying, TEXT("Verifying SHA-256..."));
-        FString Error;
         if (!VerifySha256(Bytes, PendingManifest.PackageSha256, Error))
         {
             SetState(EMETSEUpdateState::Failed, Error);
@@ -211,8 +264,10 @@ void UMETSEUpdateCenterSubsystem::DownloadPackage()
 
         PreviousContentVersion = ActiveContentVersion;
         PreviousPakPath = ActivePakPath;
+        PreviousSequence = ActiveSequence;
         ActiveContentVersion = PendingManifest.UpdateVersion;
         ActivePakPath = FinalPath;
+        ActiveSequence = PendingManifest.Sequence;
         SaveLocalState();
         SetState(EMETSEUpdateState::Active, FString::Printf(TEXT("Content update %s is active."), *ActiveContentVersion));
         OnProgress.Broadcast(1.0f);
@@ -240,6 +295,24 @@ bool UMETSEUpdateCenterSubsystem::ParseManifest(const FString& JsonText, FMETSEU
         return true;
     };
 
+    auto RequiredInteger = [&Root, &OutError](const TCHAR* Name, int64& Out) -> bool
+    {
+        double Number = 0.0;
+        if (!Root->TryGetNumberField(Name, Number) || !FMath::IsFinite(Number) || Number < 0.0 || Number > METSEUpdate::MaxExactJsonInteger)
+        {
+            OutError = FString::Printf(TEXT("Manifest integer field '%s' is missing or invalid."), Name);
+            return false;
+        }
+        const int64 Parsed = static_cast<int64>(Number);
+        if (static_cast<double>(Parsed) != Number)
+        {
+            OutError = FString::Printf(TEXT("Manifest field '%s' must be an integer."), Name);
+            return false;
+        }
+        Out = Parsed;
+        return true;
+    };
+
     if (!RequiredString(TEXT("updateVersion"), OutManifest.UpdateVersion) ||
         !RequiredString(TEXT("channel"), OutManifest.Channel) ||
         !RequiredString(TEXT("packageUrl"), OutManifest.PackageUrl) ||
@@ -247,10 +320,21 @@ bool UMETSEUpdateCenterSubsystem::ParseManifest(const FString& JsonText, FMETSEU
         !RequiredString(TEXT("packageType"), OutManifest.PackageType) ||
         !RequiredString(TEXT("minimumCoreVersion"), OutManifest.MinimumCoreVersion)) return false;
 
-    double Number = 0.0;
-    if (Root->TryGetNumberField(TEXT("requiresAppBuild"), Number)) OutManifest.RequiresAppBuild = static_cast<int32>(Number);
-    if (Root->TryGetNumberField(TEXT("contentSchema"), Number)) OutManifest.ContentSchema = static_cast<int32>(Number);
-    if (Root->TryGetNumberField(TEXT("sizeBytes"), Number)) OutManifest.SizeBytes = static_cast<int64>(Number);
+    int64 RequiresAppBuild = 0;
+    int64 ContentSchema = 0;
+    if (!RequiredInteger(TEXT("requiresAppBuild"), RequiresAppBuild) ||
+        !RequiredInteger(TEXT("contentSchema"), ContentSchema) ||
+        !RequiredInteger(TEXT("sequence"), OutManifest.Sequence) ||
+        !RequiredInteger(TEXT("sizeBytes"), OutManifest.SizeBytes)) return false;
+
+    if (RequiresAppBuild > MAX_int32 || ContentSchema > MAX_int32)
+    {
+        OutError = TEXT("Manifest compatibility integers exceed supported range.");
+        return false;
+    }
+
+    OutManifest.RequiresAppBuild = static_cast<int32>(RequiresAppBuild);
+    OutManifest.ContentSchema = static_cast<int32>(ContentSchema);
     Root->TryGetBoolField(TEXT("restartRequired"), OutManifest.bRestartRequired);
     Root->TryGetStringField(TEXT("mountPoint"), OutManifest.MountPoint);
     return true;
@@ -259,12 +343,13 @@ bool UMETSEUpdateCenterSubsystem::ParseManifest(const FString& JsonText, FMETSEU
 bool UMETSEUpdateCenterSubsystem::ValidateManifest(const FMETSEUpdateManifest& Manifest, FString& OutError) const
 {
     if (!METSEUpdate::IsSafeVersionString(Manifest.UpdateVersion)) { OutError = TEXT("Update version is missing or contains unsafe characters."); return false; }
-    if (!Manifest.PackageUrl.StartsWith(TEXT("https://"), ESearchCase::IgnoreCase)) { OutError = TEXT("Package URL must use HTTPS."); return false; }
+    if (!IsTrustedHttpsUrl(Manifest.PackageUrl, OutError)) return false;
     if (Manifest.PackageType != TEXT("content_patch")) { OutError = TEXT("Only content_patch packages are allowed."); return false; }
     if (!(Manifest.Channel == TEXT("stable") || Manifest.Channel == TEXT("development") || Manifest.Channel == TEXT("experimental"))) { OutError = TEXT("Update channel is invalid."); return false; }
     if (Manifest.MinimumCoreVersion != TEXT("0.1.0")) { OutError = TEXT("Patch minimumCoreVersion is incompatible."); return false; }
     if (Manifest.RequiresAppBuild != METSEUpdate::CoreBuild) { OutError = TEXT("Patch requires a different app/core build."); return false; }
     if (Manifest.ContentSchema != METSEUpdate::ContentSchema) { OutError = TEXT("Patch content schema is incompatible."); return false; }
+    if (Manifest.Sequence <= ActiveSequence) { OutError = TEXT("Patch sequence is not newer than the active content sequence."); return false; }
     if (!METSEUpdate::IsHexSha256(Manifest.PackageSha256)) { OutError = TEXT("Manifest SHA-256 is invalid."); return false; }
     if (Manifest.SizeBytes <= 0 || Manifest.SizeBytes > METSEUpdate::MaxPackageBytes) { OutError = TEXT("Manifest package size violates the 32 MiB V0.1 safety cap."); return false; }
     return true;
@@ -353,6 +438,7 @@ bool UMETSEUpdateCenterSubsystem::RollbackToPrevious()
 
     Swap(ActivePakPath, PreviousPakPath);
     Swap(ActiveContentVersion, PreviousContentVersion);
+    Swap(ActiveSequence, PreviousSequence);
     SaveLocalState();
     SetState(EMETSEUpdateState::Active, FString::Printf(TEXT("Rolled back to %s."), *ActiveContentVersion));
     return true;
@@ -365,7 +451,11 @@ void UMETSEUpdateCenterSubsystem::LoadLocalState()
     GConfig->GetString(TEXT("Update"), TEXT("PreviousContentVersion"), PreviousContentVersion, StatePath);
     GConfig->GetString(TEXT("Update"), TEXT("ActivePakPath"), ActivePakPath, StatePath);
     GConfig->GetString(TEXT("Update"), TEXT("PreviousPakPath"), PreviousPakPath, StatePath);
+    GConfig->GetInt64(TEXT("Update"), TEXT("ActiveSequence"), ActiveSequence, StatePath);
+    GConfig->GetInt64(TEXT("Update"), TEXT("PreviousSequence"), PreviousSequence, StatePath);
     if (ActiveContentVersion.IsEmpty()) ActiveContentVersion = TEXT("base");
+    if (ActiveSequence < 0) ActiveSequence = 0;
+    if (PreviousSequence < 0) PreviousSequence = 0;
 }
 
 void UMETSEUpdateCenterSubsystem::SaveLocalState() const
@@ -375,5 +465,9 @@ void UMETSEUpdateCenterSubsystem::SaveLocalState() const
     GConfig->SetString(TEXT("Update"), TEXT("PreviousContentVersion"), *PreviousContentVersion, StatePath);
     GConfig->SetString(TEXT("Update"), TEXT("ActivePakPath"), *ActivePakPath, StatePath);
     GConfig->SetString(TEXT("Update"), TEXT("PreviousPakPath"), *PreviousPakPath, StatePath);
+    const FString ActiveSequenceString = FString::Printf(TEXT("%lld"), static_cast<long long>(ActiveSequence));
+    const FString PreviousSequenceString = FString::Printf(TEXT("%lld"), static_cast<long long>(PreviousSequence));
+    GConfig->SetString(TEXT("Update"), TEXT("ActiveSequence"), *ActiveSequenceString, StatePath);
+    GConfig->SetString(TEXT("Update"), TEXT("PreviousSequence"), *PreviousSequenceString, StatePath);
     GConfig->Flush(false, StatePath);
 }
