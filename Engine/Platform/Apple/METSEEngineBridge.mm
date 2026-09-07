@@ -39,7 +39,21 @@ struct METSEFrameUniforms { vector_float4 timing; vector_float4 camera; vector_f
 - (void)setMoveForward:(float)forward strafe:(float)strafe { _core.setMovementInput(forward, strafe); }
 - (void)addLookYaw:(float)yaw pitch:(float)pitch { _core.addLookInput(yaw, pitch); }
 - (void)triggerFire { _core.triggerFire(); _muzzleFlash = 1.0f; }
-- (NSString *)statusString { const auto&s=_core.snapshot(); return [NSString stringWithFormat:@"60Hz • %.1f, %.1f • shot %llu",s.playerX,s.playerZ,(unsigned long long)s.shotsFired]; }
+- (NSString *)statusString {
+    const auto&s=_core.snapshot();
+    const auto d=_core.diagnostics();
+    const auto head=metse::sha256Hex(d.journalHead);
+    NSString *journal = d.journalValid ? @"JRN OK" : @"JRN FAIL";
+    return [NSString stringWithFormat:@"60Hz • %.1f, %.1f • %@ • CP %llu/%llu/%llu • BB %llu • H %.8s",
+            s.playerX,
+            s.playerZ,
+            journal,
+            (unsigned long long)d.integrity.commandsCommitted,
+            (unsigned long long)d.integrity.commandsRejected,
+            (unsigned long long)d.integrity.commandsRolledBack,
+            (unsigned long long)d.retainedBlackBoxFrames,
+            head.c_str()];
+}
 - (void)mtkView:(MTKView *)view drawableSizeWillChange:(CGSize)size {}
 
 - (void)drawInMTKView:(MTKView *)view {

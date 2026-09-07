@@ -46,22 +46,52 @@ if launch_path.exists():
 proj = (ROOT / 'project.yml').read_text()
 req('GENERATE_INFOPLIST_FILE: NO' in proj, 'Generated plist forbidden for screen-critical contract')
 req('TARGETED_DEVICE_FAMILY: "1"' in proj, 'METSE must remain iPhone-only')
-req('CURRENT_PROJECT_VERSION: "4"' in proj, 'Build must be 4')
-req('MARKETING_VERSION: "0.1.2"' in proj, 'Version must be 0.1.2')
+req('CURRENT_PROJECT_VERSION: "5"' in proj, 'Build must be 5')
+req('MARKETING_VERSION: "0.1.3"' in proj, 'Version must be 0.1.3')
 
 wf = (ROOT / '.github/workflows/build-ios-unsigned.yml').read_text()
 req('runs-on: macos-15' in wf, 'Hosted macOS required')
+req('C++ engine + integrity tests' in wf, 'Runtime integrity tests must remain a mandatory CI gate')
 
 build = (ROOT / 'Scripts/build_unsigned_ipa.sh').read_text()
 req("p.get('UIDeviceFamily') == [1]" in build, 'Final IPA must validate iPhone-only family')
 req("p.get('UILaunchStoryboardName') == 'LaunchScreen'" in build, 'Final IPA must validate LaunchScreen storyboard binding')
 req("'UILaunchScreen' not in p" in build, 'Final IPA must reject UILaunchScreen fallback dictionary')
-req("LaunchScreen.storyboardc" in build, 'Final app must validate compiled launch storyboard')
+req('LaunchScreen.storyboardc' in build, 'Final app must validate compiled launch storyboard')
+req('METSEIntegrityCore.o' in build, 'Final build must prove Runtime Integrity core was compiled')
 req('.ci-output' in build, 'CI outputs must be isolated from BUILD file')
+
+required_integrity = [
+    ROOT / 'Engine/Core/METSEIntegrityCore.hpp',
+    ROOT / 'Engine/Core/METSEIntegrityCore.cpp',
+]
+for path in required_integrity:
+    req(path.exists(), f'Runtime Integrity source missing: {path.relative_to(ROOT)}')
+
+engine_header = (ROOT / 'Engine/Core/METSEEngineCore.hpp').read_text(errors='ignore')
+integrity_header = (ROOT / 'Engine/Core/METSEIntegrityCore.hpp').read_text(errors='ignore') if required_integrity[0].exists() else ''
+integrity_source = (ROOT / 'Engine/Core/METSEIntegrityCore.cpp').read_text(errors='ignore') if required_integrity[1].exists() else ''
+tests = (ROOT / 'Tests/EngineCoreTests.cpp').read_text(errors='ignore')
+
+req('IntegrityCore integrity_' in engine_header, 'EngineCore must own exactly one Runtime Integrity control plane')
+req('executeAtomic(' in engine_header, 'All external state mutations must have one atomic command path')
+req('validateInvariants()' in engine_header, 'Atomic command path must verify invariants before commit')
+req('kBlackBoxCapacity = 720' in engine_header, 'Black Box must remain bounded to 720 frames')
+req('kCommandCapacity = 96' in integrity_header, 'Command ledger must remain bounded')
+req('kEventCapacity = 256' in integrity_header, 'Event ledger must remain bounded')
+req('Sha256Digest' in integrity_header and 'sha256(' in integrity_source, 'Portable SHA-256 journal chain is required')
+req('verifyJournal()' in integrity_header and 'verifyJournal() const' in integrity_source, 'Journal verification is required')
+req('commandsRolledBack' in integrity_header, 'Rollback metrics are required')
+req('METSE_TESTING' in engine_header, 'Adversarial rollback hook must stay test-only')
+req('testOnlyExecuteInvariantViolation' in tests, 'Adversarial rollback regression test missing')
+req('quiet_NaN' in tests and '33' in tests, 'Invalid-input regression coverage missing')
+req('kBlackBoxCapacity' in tests and 'kEventCapacity' in tests, 'Bounded-memory regression coverage missing')
 
 core = '\n'.join(p.read_text(errors='ignore') for p in (ROOT / 'Engine/Core').glob('*') if p.is_file())
 for forbidden in ('UIKit', 'MetalKit', 'Foundation/Foundation.h', 'MTLDevice', 'MTKView'):
     req(forbidden not in core, f'Portable core imports {forbidden}')
+for forbidden in ('WKWebView', 'JavaScriptCore', 'localStorage', 'requestAnimationFrame'):
+    req(forbidden not in core, f'Portable core contains forbidden web runtime dependency: {forbidden}')
 
 bootstrap = json.loads((ROOT / 'Content/bootstrap.json').read_text())
 req(bootstrap.get('engineTuning', {}).get('maxCombatants') == 32, '32 combatant cap missing')

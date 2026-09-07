@@ -24,8 +24,8 @@ python3 - "$PLIST" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as f:
     p = plistlib.load(f)
-assert p.get('CFBundleShortVersionString') == '0.1.2', p.get('CFBundleShortVersionString')
-assert p.get('CFBundleVersion') == '4', p.get('CFBundleVersion')
+assert p.get('CFBundleShortVersionString') == '0.1.3', p.get('CFBundleShortVersionString')
+assert p.get('CFBundleVersion') == '5', p.get('CFBundleVersion')
 assert p.get('UIDeviceFamily') == [1], p.get('UIDeviceFamily')
 assert p.get('UILaunchStoryboardName') == 'LaunchScreen', p.get('UILaunchStoryboardName')
 assert 'UILaunchScreen' not in p, p.get('UILaunchScreen')
@@ -47,9 +47,15 @@ LAUNCH_COMPILED="$(find "$APP" -type d -name 'LaunchScreen.storyboardc' -print -
 }
 echo "Compiled LaunchScreen: PASS ($LAUNCH_COMPILED)"
 
+BINARY="$APP/METSE"
+[[ -f "$BINARY" ]] || { echo "METSE executable missing" >&2; exit 33; }
+INTEGRITY_OBJECT="$(find "$OUT/DerivedData/Build/Intermediates.noindex" -type f -name 'METSEIntegrityCore.o' -print -quit)"
+[[ -n "$INTEGRITY_OBJECT" ]] || { echo "METSEIntegrityCore.o missing from Release intermediates" >&2; exit 34; }
+echo "Runtime Integrity compile evidence: PASS ($INTEGRITY_OBJECT)"
+
 mkdir -p "$OUT/Payload"
 cp -R "$APP" "$OUT/Payload/METSE.app"
-(cd "$OUT" && zip -qry METSE_v0.1.2_build004_unsigned.ipa Payload)
-unzip -t "$OUT/METSE_v0.1.2_build004_unsigned.ipa" >/dev/null
-shasum -a 256 "$OUT/METSE_v0.1.2_build004_unsigned.ipa" > "$OUT/METSE_v0.1.2_build004_unsigned.ipa.sha256"
-echo "Unsigned IPA Build 004: PASS"
+(cd "$OUT" && zip -qry METSE_v0.1.3_build005_unsigned.ipa Payload)
+unzip -t "$OUT/METSE_v0.1.3_build005_unsigned.ipa" >/dev/null
+shasum -a 256 "$OUT/METSE_v0.1.3_build005_unsigned.ipa" > "$OUT/METSE_v0.1.3_build005_unsigned.ipa.sha256"
+echo "Unsigned IPA Build 005: PASS"

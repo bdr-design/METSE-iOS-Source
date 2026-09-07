@@ -3,6 +3,7 @@ import MetalKit
 
 final class GameViewController: UIViewController {
     private var engine: METSEEngineBridge?
+    private var statusTimer: Timer?
     private let statusLabel = UILabel()
     private let leftPad = UIView()
     private let rightPad = UIView()
@@ -37,19 +38,41 @@ final class GameViewController: UIViewController {
         engine?.start()
         configureInput()
         configureHUD()
+        refreshStatus()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: animated)
+        startStatusTimer()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        statusTimer?.invalidate()
+        statusTimer = nil
         engine?.setMoveForward(0, strafe: 0)
         if isMovingFromParent {
             engine?.stop()
         }
+    }
+
+    deinit {
+        statusTimer?.invalidate()
+    }
+
+    private func startStatusTimer() {
+        statusTimer?.invalidate()
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.refreshStatus()
+        }
+        if let statusTimer {
+            RunLoop.main.add(statusTimer, forMode: .common)
+        }
+    }
+
+    private func refreshStatus() {
+        statusLabel.text = engine?.statusString() ?? "ENGINE OFFLINE"
     }
 
     private func configureHUD() {
@@ -64,12 +87,14 @@ final class GameViewController: UIViewController {
         }, for: .touchUpInside)
 
         statusLabel.text = "ENGINE ONLINE • 60HZ"
-        statusLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+        statusLabel.font = .monospacedSystemFont(ofSize: 9, weight: .semibold)
         statusLabel.textColor = UIColor(red: 0.55, green: 0.92, blue: 0.75, alpha: 1)
         statusLabel.backgroundColor = UIColor.black.withAlphaComponent(0.34)
         statusLabel.textAlignment = .center
         statusLabel.layer.cornerRadius = 10
         statusLabel.layer.masksToBounds = true
+        statusLabel.adjustsFontSizeToFitWidth = true
+        statusLabel.minimumScaleFactor = 0.72
 
         let fireButton = UIButton(type: .system)
         fireButton.setImage(UIImage(systemName: "scope"), for: .normal)
@@ -94,7 +119,7 @@ final class GameViewController: UIViewController {
 
             statusLabel.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 10),
             statusLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
-            statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 290),
             statusLabel.heightAnchor.constraint(equalToConstant: 30),
 
             fireButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),

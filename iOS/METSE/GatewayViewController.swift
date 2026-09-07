@@ -89,7 +89,7 @@ final class GatewayViewController: UIViewController {
         }, for: .touchUpInside)
 
         let metadata = UILabel()
-        metadata.text = "BUILD 004  •  NATIVE METAL  •  CONTENT DEV  •  32 MAX"
+        metadata.text = "BUILD 005  •  NATIVE METAL  •  RUNTIME INTEGRITY  •  32 MAX"
         metadata.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
         metadata.textColor = UIColor.white.withAlphaComponent(0.42)
         metadata.numberOfLines = 2
