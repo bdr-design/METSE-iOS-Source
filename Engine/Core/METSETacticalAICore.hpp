@@ -9,6 +9,7 @@ class WorldCollisionCore;
 
 enum class AIAlertState : std::uint8_t { Unaware=0, Suspicious=1, Investigating=2, Engaged=3 };
 enum class AISquadOrder : std::uint8_t { Hold=0, Search=1, Assault=2, Defend=3 };
+enum class AIPerceptionSource : std::uint8_t { None=0, Hearing=1, Vision=2 };
 
 struct TacticalAIConfig {
     double maxVisionDistanceMeters = 72.0;
@@ -16,6 +17,7 @@ struct TacticalAIConfig {
     double memorySeconds = 8.0;
     double hearingBaseMeters = 6.0;
     double hearingMaxMeters = 34.0;
+    double hearingMaxLocalizationErrorMeters = 7.0;
     double agentEyeHeight = 1.58;
     double suspiciousConfidence = 0.20;
     double engagedConfidence = 0.62;
@@ -30,6 +32,7 @@ struct TacticalAgentState {
     double confidence = 0.0;
     double threat = 0.0;
     AIAlertState alert = AIAlertState::Unaware;
+    AIPerceptionSource perceptionSource = AIPerceptionSource::None;
     bool alive = false;
     bool hasLineOfSight = false;
     bool heardPlayer = false;
@@ -67,6 +70,7 @@ private:
     static double clamp01(double value) noexcept;
     static double lengthXZ(Vec3 value) noexcept;
     static double wrapAngle(double radians) noexcept;
+    static Vec3 hearingEstimate(std::uint32_t agentId, Vec3 playerPosition, double confidence, double maxErrorMeters) noexcept;
     TacticalAIConfig config_{};
     std::array<TacticalAgentState,kMaxAgents> agents_{};
     std::size_t agentCount_ = 0;
