@@ -12,6 +12,18 @@ Vec3 normalize(Vec3 v) noexcept { const double l=length(v); return (std::isfinit
 double dot(Vec3 a,Vec3 b) noexcept { return a.x*b.x+a.y*b.y+a.z*b.z; }
 Vec3 mul(Vec3 v,double s) noexcept { return {v.x*s,v.y*s,v.z*s}; }
 Vec3 add(Vec3 a,Vec3 b) noexcept { return {a.x+b.x,a.y+b.y,a.z+b.z}; }
+
+void observe(ProjectileSegmentObserver observer,
+             void *context,
+             Vec3 from,
+             Vec3 to,
+             double speed,
+             std::uint64_t correlationId,
+             bool traversed,
+             bool terminated) noexcept {
+    if(observer==nullptr) return;
+    observer(context,{from,to,speed,correlationId,traversed,terminated});
+}
 }
 void BallisticsCore::reset() noexcept { projectiles_={}; metrics_={}; }
 bool BallisticsCore::spawn(const ShotSolution& shot) noexcept {
@@ -19,12 +31,23 @@ bool BallisticsCore::spawn(const ShotSolution& shot) noexcept {
     for (auto& p:projectiles_) if(!p.active){p={true,shot.origin,{shot.direction.x*shot.muzzleVelocity,shot.direction.y*shot.muzzleVelocity,shot.direction.z*shot.muzzleVelocity},shot.massKg,0.0,shot.correlationId,0,0};++metrics_.spawned;return true;}
     ++metrics_.rejectedSpawns;return false;
 }
-void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageCore& damage) noexcept {
+void BallisticsCore::fixedStep(double dt,
+                               const WorldCollisionCore& world,
+                               DamageCore& damage,
+                               ProjectileSegmentObserver observer,
+                               void *observerContext) noexcept {
     if (!std::isfinite(dt)||dt<=0.0) return;
     for(auto& p:projectiles_){
         if(!p.active) continue;
         double speed=length(p.velocity);
-        if(!std::isfinite(speed)||speed<10.0||p.ageSeconds>4.0){p.active=false;++metrics_.expired;continue;}
+        if(!std::isfinite(speed)||speed<10.0||p.ageSeconds>4.0){
+            const Vec3 terminalPosition=p.position;
+            p.active=false;
+            ++metrics_.expired;
+            observe(observer,observerContext,terminalPosition,terminalPosition,
+                    std::isfinite(speed)?speed:0.0,p.correlationId,false,true);
+            continue;
+        }
 
         // Atmospheric loss and gravity are integrated once per fixed simulation slice.
         const double drag=std::max(0.0,1.0-dt*0.035);
@@ -34,7 +57,14 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
 
         while(p.active && remainingDt>1e-6 && contactsThisStep<kMaxContactsPerStep){
             speed=length(p.velocity);
-            if(!std::isfinite(speed)||speed<10.0){p.active=false;++metrics_.expired;break;}
+            if(!std::isfinite(speed)||speed<10.0){
+                const Vec3 terminalPosition=p.position;
+                p.active=false;
+                ++metrics_.expired;
+                observe(observer,observerContext,terminalPosition,terminalPosition,
+                        std::isfinite(speed)?speed:0.0,p.correlationId,false,true);
+                break;
+            }
             const Vec3 from=p.position;
             const Vec3 to={from.x+p.velocity.x*remainingDt,from.y+p.velocity.y*remainingDt,from.z+p.velocity.z*remainingDt};
             const double energy=0.5*p.massKg*speed*speed;
@@ -47,11 +77,20 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
                 const auto result=damage.applyIntersection(targetHit,energy,p.correlationId,normalize(p.velocity));
                 if(result.hit){
                     p.position={from.x+(to.x-from.x)*targetHit.t,from.y+(to.y-from.y)*targetHit.t,from.z+(to.z-from.z)*targetHit.t};
-                    p.active=false;++metrics_.impacts;++metrics_.targetImpacts;break;
+                    p.active=false;
+                    ++metrics_.impacts;
+                    ++metrics_.targetImpacts;
+                    observe(observer,observerContext,from,p.position,speed,p.correlationId,true,true);
+                    break;
                 }
             }
 
-            if(!worldHit.hit){p.position=to;remainingDt=0.0;break;}
+            if(!worldHit.hit){
+                p.position=to;
+                remainingDt=0.0;
+                observe(observer,observerContext,from,p.position,speed,p.correlationId,true,false);
+                break;
+            }
 
             ++contactsThisStep;
             ++metrics_.impacts;
@@ -74,6 +113,7 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
                 ++p.penetrations;++metrics_.penetrations;
                 const Vec3 after=normalize(p.velocity);
                 p.position=add(worldHit.exitPoint,mul(after,0.01));
+                observe(observer,observerContext,from,worldHit.point,speed,p.correlationId,true,false);
                 remainingDt*=std::max(0.0,1.0-worldHit.exitT);
                 continue;
             }
@@ -93,6 +133,7 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
                     p.velocity=reflected;
                     ++p.ricochets;++metrics_.ricochets;
                     p.position=add(worldHit.point,mul(normalize(reflected),0.01));
+                    observe(observer,observerContext,from,worldHit.point,speed,p.correlationId,true,false);
                     remainingDt*=std::max(0.0,1.0-worldHit.t);
                     continue;
                 }
@@ -101,6 +142,7 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
             ++metrics_.terminalWorldImpacts;
             p.position=worldHit.point;
             p.active=false;
+            observe(observer,observerContext,from,p.position,speed,p.correlationId,true,true);
             break;
         }
         if(p.active) p.ageSeconds+=dt;
@@ -108,8 +150,21 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
 }
 std::size_t BallisticsCore::activeCount() const noexcept {std::size_t n=0;for(const auto& p:projectiles_)if(p.active)++n;return n;}
 bool BallisticsCore::validate() const noexcept {
-    if(metrics_.terminalWorldImpacts>metrics_.worldImpacts||metrics_.penetrations>metrics_.worldImpacts||metrics_.ricochets>metrics_.worldImpacts)return false;
-    for(WorldMaterial material:{WorldMaterial::Concrete,WorldMaterial::Steel,WorldMaterial::Wood,WorldMaterial::Brick,WorldMaterial::Glass,WorldMaterial::Soil,WorldMaterial::Rock})if(!MaterialCore::validateProfile(MaterialCore::ballistic(material)))return false;
-    for(const auto& p:projectiles_)if(p.active){if(!std::isfinite(p.position.x)||!std::isfinite(p.position.y)||!std::isfinite(p.position.z)||!std::isfinite(p.velocity.x)||!std::isfinite(p.velocity.y)||!std::isfinite(p.velocity.z)||!std::isfinite(p.massKg)||p.massKg<=0.0||!std::isfinite(p.ageSeconds)||p.ageSeconds<0.0||p.correlationId==0||p.penetrations>kMaxPenetrationsPerProjectile||p.ricochets>kMaxRicochetsPerProjectile)return false;}return activeCount()<=kMaxProjectiles;
+    if(metrics_.terminalWorldImpacts>metrics_.worldImpacts||
+       metrics_.penetrations>metrics_.worldImpacts||
+       metrics_.ricochets>metrics_.worldImpacts) return false;
+    for(WorldMaterial material:{WorldMaterial::Concrete,WorldMaterial::Steel,WorldMaterial::Wood,
+                                WorldMaterial::Brick,WorldMaterial::Glass,WorldMaterial::Soil,WorldMaterial::Rock}){
+        if(!MaterialCore::validateProfile(MaterialCore::ballistic(material))) return false;
+    }
+    for(const auto& projectile:projectiles_){
+        if(!projectile.active) continue;
+        if(!std::isfinite(projectile.position.x)||!std::isfinite(projectile.position.y)||!std::isfinite(projectile.position.z)||
+           !std::isfinite(projectile.velocity.x)||!std::isfinite(projectile.velocity.y)||!std::isfinite(projectile.velocity.z)||
+           !std::isfinite(projectile.massKg)||projectile.massKg<=0.0||!std::isfinite(projectile.ageSeconds)||projectile.ageSeconds<0.0||
+           projectile.correlationId==0||projectile.penetrations>kMaxPenetrationsPerProjectile||
+           projectile.ricochets>kMaxRicochetsPerProjectile) return false;
+    }
+    return activeCount()<=kMaxProjectiles;
 }
 } // namespace metse

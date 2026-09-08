@@ -1,4 +1,5 @@
 #pragma once
+#include "METSEAudioFXCore.hpp"
 #include "METSEBallisticsCore.hpp"
 #include "METSECharacterMotor.hpp"
 #include "METSEDamageCore.hpp"
@@ -72,6 +73,7 @@ struct EngineSnapshot {
     std::uint64_t damageIncapacitations = 0;
     VisibilityReport visibility{};
     TacticalAIReport tacticalAI{};
+    AudioFXReport audioFX{};
 };
 
 struct BlackBoxFrame {
@@ -106,6 +108,7 @@ struct EngineDiagnostics {
     BallisticsMetrics ballistics{};
     VisibilityReport visibility{};
     TacticalAIReport tacticalAI{};
+    AudioFXReport audioFX{};
     GameplayDenialMetrics gameplayDenials{};
     std::size_t retainedEvents = 0;
     std::size_t retainedCommands = 0;
@@ -128,6 +131,7 @@ struct EngineDiagnostics {
     bool damageValid = false;
     bool visibilityValid = false;
     bool tacticalAIValid = false;
+    bool audioFXValid = false;
 };
 
 class EngineCore final {
@@ -157,6 +161,8 @@ public:
     [[nodiscard]] const std::array<DamageTarget,DamageCore::kMaxTargets>& damageTargets() const noexcept { return damage_.targets(); }
     [[nodiscard]] std::size_t damageTargetCount() const noexcept { return damage_.targetCount(); }
     [[nodiscard]] const TacticalAICore& tacticalAI() const noexcept { return tacticalAI_; }
+    [[nodiscard]] const VisibilityCore& visibilityCore() const noexcept { return visibility_; }
+    [[nodiscard]] const AudioFXCore& audioFX() const noexcept { return audioFX_; }
     [[nodiscard]] Sha256Digest deterministicStateHash() const noexcept;
 
 #ifdef METSE_TESTING
@@ -175,6 +181,7 @@ private:
         DamageCore damage{};
         VisibilityCore visibility{};
         TacticalAICore tacticalAI{};
+        AudioFXCore audioFX{};
         double accumulator = 0.0;
         double moveForward = 0.0;
         double moveStrafe = 0.0;
@@ -203,7 +210,7 @@ private:
         }
 
         const std::uint64_t commandId=integrity_.admit(kind,state_.simulationTick);
-        MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,tacticalAI_,accumulatorSeconds_,moveForward_,moveStrafe_,consumedDamageResultSequence_,sprintHeld_};
+        MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,tacticalAI_,audioFX_,accumulatorSeconds_,moveForward_,moveStrafe_,consumedDamageResultSequence_,sprintHeld_};
         const bool applied=apply(commandId);
         syncSnapshot();
         if(!applied || !validateInvariants()){
@@ -214,6 +221,7 @@ private:
             damage_=cp.damage;
             visibility_=cp.visibility;
             tacticalAI_=cp.tacticalAI;
+            audioFX_=cp.audioFX;
             accumulatorSeconds_=cp.accumulator;
             moveForward_=cp.moveForward;
             moveStrafe_=cp.moveStrafe;
@@ -251,6 +259,7 @@ private:
     DamageCore damage_{};
     VisibilityCore visibility_{};
     TacticalAICore tacticalAI_{};
+    AudioFXCore audioFX_{};
     ObservatoryCore observatory_{};
     InputCommandQueue inputQueue_{};
     IntegrityCore integrity_{};

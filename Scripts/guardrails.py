@@ -45,6 +45,7 @@ req('MARKETING_VERSION: "0.3.0"' in project,'project version must remain 0.3.0 d
 req('CURRENT_PROJECT_VERSION: "8"' in project,'project build must remain 8 during Build 009 development')
 req('TARGETED_DEVICE_FAMILY: "1"' in project,'iPhone-only project required')
 req('GENERATE_INFOPLIST_FILE: NO' in project,'Generated plist forbidden')
+req('sdk: AVFoundation.framework' in project,'Native audio target must link AVFoundation')
 
 required=[
     'Engine/Core/METSEInputCommandQueue.hpp','Engine/Core/METSEInputCommandQueue.cpp',
@@ -55,13 +56,16 @@ required=[
     'Engine/Core/METSEDamageCore.hpp','Engine/Core/METSEDamageCore.cpp',
     'Engine/Core/METSEBallisticsCore.hpp','Engine/Core/METSEBallisticsCore.cpp',
     'Engine/Core/METSEVisibilityCore.hpp','Engine/Core/METSEVisibilityCore.cpp',
+    'Engine/Core/METSEAudioFXCore.hpp','Engine/Core/METSEAudioFXCore.cpp',
     'Engine/Core/METSEObservatoryCore.hpp','Engine/Core/METSEObservatoryCore.cpp',
     'Engine/Core/METSEIntegrityCore.hpp','Engine/Core/METSEIntegrityCore.cpp',
     'Engine/Core/METSETacticalAICore.hpp','Engine/Core/METSETacticalAICore.cpp',
     'Engine/Core/METSEEngineCore.hpp','Engine/Core/METSEEngineCore.cpp',
-    'Engine/Platform/Apple/METSEEngineBridge.mm','Shaders/METSERenderer.metal',
+    'Engine/Platform/Apple/METSEEngineBridge.mm','Engine/Platform/Apple/METSEAudioPresenter.h',
+    'Engine/Platform/Apple/METSEAudioPresenter.mm','Shaders/METSERenderer.metal',
     'iOS/METSE/ObservatoryViewController.swift','Docs/BUILD009_TACTICAL_COMBAT_PLAN_AR.md',
-    'Tests/EngineCoreTests.cpp','Tests/BallisticsMaterialTests.cpp','Tests/DamageAnatomyTests.cpp'
+    'Tests/EngineCoreTests.cpp','Tests/BallisticsMaterialTests.cpp','Tests/DamageAnatomyTests.cpp',
+    'Tests/AudioFXVisibilityTests.cpp','Docs/BUILD009_G_AUDIO_FX_VISIBILITY_AR.md'
 ]
 for relative in required:
     req((ROOT/relative).exists(),f'Required combat source missing: {relative}')
@@ -74,11 +78,13 @@ material=text('Engine/Core/METSEMaterialCore.hpp')+text('Engine/Core/METSEMateri
 ballistics=text('Engine/Core/METSEBallisticsCore.hpp')+text('Engine/Core/METSEBallisticsCore.cpp')
 damage=text('Engine/Core/METSEDamageCore.hpp')+text('Engine/Core/METSEDamageCore.cpp')
 visibility=text('Engine/Core/METSEVisibilityCore.hpp')+text('Engine/Core/METSEVisibilityCore.cpp')
+audio_fx=text('Engine/Core/METSEAudioFXCore.hpp')+text('Engine/Core/METSEAudioFXCore.cpp')
 observatory=text('Engine/Core/METSEObservatoryCore.hpp')+text('Engine/Core/METSEObservatoryCore.cpp')
 ai=text('Engine/Core/METSETacticalAICore.hpp')+text('Engine/Core/METSETacticalAICore.cpp')
 integrity=text('Engine/Core/METSEIntegrityCore.hpp')+text('Engine/Core/METSEIntegrityCore.cpp')
 bridge_h=text('Engine/Platform/Apple/METSEEngineBridge.h')
 bridge=text('Engine/Platform/Apple/METSEEngineBridge.mm')
+audio_presenter=text('Engine/Platform/Apple/METSEAudioPresenter.h')+text('Engine/Platform/Apple/METSEAudioPresenter.mm')
 shader=text('Shaders/METSERenderer.metal')
 engine_tests=text('Tests/EngineCoreTests.cpp')
 material_tests=text('Tests/BallisticsMaterialTests.cpp')
@@ -119,6 +125,7 @@ req('resultBySequence' in engine and 'DamageCore::kResultCapacity' in engine,'En
 req('DamageCore::combatCapable' in engine,'Incapacitated targets must not remain Tactical AI combatants')
 
 req('kMaxEntities=32' in visibility or 'kMaxEntities = 32' in visibility,'Visibility cap must be 32')
+req('kCueCapacity=64' in audio_fx and 'kFXCapacity=48' in audio_fx and 'fxDropped' in audio_fx,'Bounded Audio/FX contract missing')
 req('onePercentLowFPS' in observatory and 'pointOnePercentLowFPS' in observatory and 'p99FrameMilliseconds' in observatory,'Observatory percentiles missing')
 req('kMaxAgents = 32' in ai or 'kMaxAgents=32' in ai,'Tactical AI agent cap must be 32')
 req('raycastSegment' in ai and 'lastKnownPlayerPosition' in ai and 'memorySeconds' in ai,'Tactical AI LOS/memory contract missing')
@@ -135,10 +142,11 @@ req('TacticalAICore tacticalAI_' in engine and
 
 req('NSProcessInfoThermalStateSerious' in bridge and 'preferredFramesPerSecond = target' in bridge,'Thermal presentation fallback missing')
 req('_core.advance' in bridge and '_core.setMovementInput' in bridge,'Bridge simulation/input integration missing')
+req('METSEAudioPresenter' in bridge and 'AVAudioSourceNode' in audio_presenter,'Native audio presentation consumer missing')
 req('(nullable instancetype)initWithView' in bridge_h,'Bridge initializer must remain nullable because Metal initialization can fail')
 req('out float' not in shader,'GLSL-style out parameters are forbidden in Metal Shading Language')
-req('kRenderProjectileCap' in bridge and 'targetData' in bridge,'Renderer telemetry bridge missing')
-req('ads' in shader and 'projectilePositions' in shader and 'targetData' in shader and 'weaponMask' in shader,'Weapon/ADS/projectile/target Metal rendering missing')
+req('kRenderProjectileCap' in bridge and 'targetData' in bridge and 'targetMeta' in bridge and 'fxData' in bridge,'Renderer telemetry bridge missing')
+req('ads' in shader and 'projectilePositions' in shader and 'targetData' in shader and 'targetMeta' in shader and 'fxData' in shader and 'weaponMask' in shader,'Weapon/ADS/projectile/target/FX Metal rendering missing')
 
 req('METSE Build 009 Tactical Combat Foundation Tests: PASS' in engine_tests,'Build009 tactical test banner missing')
 req('METSE Build 009 Ballistics + Material Contact Truth Tests: PASS' in material_tests,'009-C regression banner missing')
@@ -169,7 +177,7 @@ req('Xcode platform compile gate' in workflow,'Full platform type/compile gate m
 req('METSE-v0.3.0-build008-mega-combat-unsigned' in workflow,'Current development artifact name missing')
 
 build=text('Scripts/build_unsigned_ipa.sh')
-for obj in ('METSEInputCommandQueue','METSEWeaponCore','METSEWorldCollision','METSEMaterialCore','METSEDamageCore','METSEBallisticsCore','METSEVisibilityCore','METSEObservatoryCore','METSEIntegrityCore','METSETacticalAICore','METSEEngineCore'):
+for obj in ('METSEInputCommandQueue','METSEWeaponCore','METSEWorldCollision','METSEMaterialCore','METSEDamageCore','METSEBallisticsCore','METSEVisibilityCore','METSEAudioFXCore','METSEObservatoryCore','METSEIntegrityCore','METSETacticalAICore','METSEEngineCore','METSEAudioPresenter'):
     req(obj in build,f'Build evidence missing for {obj}')
 
 if errors:

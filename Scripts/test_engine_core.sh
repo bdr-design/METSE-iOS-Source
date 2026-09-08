@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-CXX="${CXX:-clang++}"
+if [[ -z "${CXX:-}" ]]; then
+  if command -v clang++ >/dev/null 2>&1; then
+    CXX="clang++"
+  else
+    CXX="c++"
+  fi
+fi
 OUT_DIR="${TMPDIR:-/tmp}/metse-build009-tests"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
@@ -13,6 +19,7 @@ COMMON=(
   Engine/Core/METSEDamageCore.cpp
   Engine/Core/METSEBallisticsCore.cpp
   Engine/Core/METSEVisibilityCore.cpp
+  Engine/Core/METSEAudioFXCore.cpp
   Engine/Core/METSEObservatoryCore.cpp
   Engine/Core/METSEIntegrityCore.cpp
   Engine/Core/METSETacticalAICore.cpp
@@ -34,3 +41,6 @@ FLAGS=(-std=c++20 -DMETSE_TESTING -Wall -Wextra -Wpedantic -Werror)
 
 "$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/BattlefieldMapTests.cpp -o "$OUT_DIR/battlefield-map-tests"
 "$OUT_DIR/battlefield-map-tests"
+
+"$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/AudioFXVisibilityTests.cpp -o "$OUT_DIR/audio-fx-visibility-tests"
+"$OUT_DIR/audio-fx-visibility-tests"

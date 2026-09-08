@@ -51,6 +51,8 @@ jobs:
         run: python3 Scripts/guardrails_009e.py
       - name: Build 009-F battlefield guardrails
         run: python3 Scripts/guardrails_009f.py
+      - name: Build 009-G audio/FX/visibility guardrails
+        run: python3 Scripts/guardrails_009g.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
       - name: Swift syntax fast gate
