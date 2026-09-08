@@ -25,7 +25,7 @@ PY
 LAUNCH="$(find "$APP" -type d -name 'LaunchScreen.storyboardc' -print -quit)"
 [[ -n "$LAUNCH" ]] || { echo "Compiled LaunchScreen.storyboardc missing" >&2; exit 31; }
 BINARY="$APP/METSE"; [[ -f "$BINARY" ]] || { echo "METSE executable missing" >&2; exit 32; }
-for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METSEWeaponCore METSEWorldCollision METSEDamageCore METSEBallisticsCore METSEVisibilityCore METSEObservatoryCore METSEEngineCore; do
+for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METSEWeaponCore METSEWorldCollision METSEMaterialCore METSEDamageCore METSEBallisticsCore METSEVisibilityCore METSEObservatoryCore METSETacticalAICore METSEEngineCore; do
   found="$(find "$OUT/DerivedData/Build/Intermediates.noindex" -type f -name "${object}.o" -print -quit)"
   [[ -n "$found" ]] || { echo "${object}.o missing from Release intermediates" >&2; exit 40; }
   echo "Compile evidence: PASS ${object}.o"
@@ -34,4 +34,4 @@ mkdir -p "$OUT/Payload"; cp -R "$APP" "$OUT/Payload/METSE.app"
 (cd "$OUT" && zip -qry METSE_v0.3.0_build008_unsigned.ipa Payload)
 unzip -t "$OUT/METSE_v0.3.0_build008_unsigned.ipa" >/dev/null
 shasum -a 256 "$OUT/METSE_v0.3.0_build008_unsigned.ipa" > "$OUT/METSE_v0.3.0_build008_unsigned.ipa.sha256"
-echo "Unsigned IPA Build 008: PASS"
+echo "Unsigned IPA Build 008 with Build 009 development systems: PASS"
