@@ -60,28 +60,40 @@ void WeaponCore::fixedStep(double dt, double horizontalSpeed, double strafeInput
     state_.swayY += (swayTargetY - state_.swayY) * std::min(1.0, dt * 9.0);
 }
 
+Vec3 WeaponCore::viewDirection(double yaw,double pitch) const noexcept {
+    if (!std::isfinite(yaw) || !std::isfinite(pitch)) return {0.0,0.0,1.0};
+    const double cp=std::cos(pitch),sp=std::sin(pitch),sy=std::sin(yaw),cy=std::cos(yaw);
+    return normalize({sy*cp,sp,cy*cp});
+}
+
+Vec3 WeaponCore::muzzlePosition(const Vec3& cameraPosition,double yaw,double pitch) const noexcept {
+    const Vec3 forward=viewDirection(yaw,pitch);
+    const double sy=std::sin(yaw),cy=std::cos(yaw);
+    const Vec3 right={cy,0.0,-sy};
+    return add(add(add(cameraPosition,mul(forward,0.43)),mul(right,0.115)),{0.0,-0.085,0.0});
+}
+
+bool WeaponCore::previewShot(const Vec3& cameraPosition,double yaw,double pitch,std::uint64_t correlationId,ShotSolution& out) const noexcept {
+    if (!std::isfinite(cameraPosition.x)||!std::isfinite(cameraPosition.y)||!std::isfinite(cameraPosition.z)||!std::isfinite(yaw)||!std::isfinite(pitch)||correlationId==0) return false;
+    const Vec3 forward=viewDirection(yaw,pitch);
+    const Vec3 muzzle=muzzlePosition(cameraPosition,yaw,pitch);
+    const Vec3 aimPoint=add(cameraPosition,mul(forward,config_.sightConvergenceMeters));
+    out.origin=muzzle;
+    out.aimPoint=aimPoint;
+    out.direction=normalize({aimPoint.x-muzzle.x,aimPoint.y-muzzle.y,aimPoint.z-muzzle.z});
+    out.muzzleVelocity=config_.muzzleVelocity;
+    out.massKg=config_.projectileMassKg;
+    out.correlationId=correlationId;
+    return true;
+}
+
 bool WeaponCore::fire(const Vec3& cameraPosition,
                       double yaw,
                       double pitch,
                       std::uint64_t correlationId,
                       ShotSolution& out) noexcept {
-    if (!std::isfinite(cameraPosition.x) || !std::isfinite(cameraPosition.y) || !std::isfinite(cameraPosition.z) ||
-        !std::isfinite(yaw) || !std::isfinite(pitch) || state_.reloading || state_.obstructed ||
-        state_.fireCooldown > 0.0 || state_.ammoInMagazine == 0 || correlationId == 0) return false;
-
-    const double cp = std::cos(pitch + state_.recoilPitch * 0.25);
-    const double sp = std::sin(pitch + state_.recoilPitch * 0.25);
-    const double sy = std::sin(yaw + state_.recoilYaw * 0.22);
-    const double cy = std::cos(yaw + state_.recoilYaw * 0.22);
-    const Vec3 viewDirection = normalize({sy * cp, sp, cy * cp});
-    const Vec3 right = {cy, 0.0, -sy};
-    const Vec3 muzzle = add(add(add(cameraPosition, mul(viewDirection, 0.43)), mul(right, 0.115)), {0.0, -0.085, 0.0});
-    const Vec3 aimPoint = add(cameraPosition, mul(viewDirection, config_.sightConvergenceMeters));
-    out.origin = muzzle;
-    out.direction = normalize({aimPoint.x-muzzle.x, aimPoint.y-muzzle.y, aimPoint.z-muzzle.z});
-    out.muzzleVelocity = config_.muzzleVelocity;
-    out.massKg = config_.projectileMassKg;
-    out.correlationId = correlationId;
+    if (state_.reloading || state_.obstructed || state_.fireCooldown > 0.0 || state_.ammoInMagazine == 0) return false;
+    if (!previewShot(cameraPosition,yaw,pitch,correlationId,out)) return false;
 
     --state_.ammoInMagazine;
     state_.fireCooldown = 60.0 / config_.roundsPerMinute;
