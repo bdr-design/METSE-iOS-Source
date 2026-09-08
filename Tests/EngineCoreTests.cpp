@@ -49,9 +49,17 @@ for(int i=0;i<20;++i)core.advance(1.0/60.0);assert(core.reloadWeapon());core.adv
 core.reset();core.cycleStance();core.advance(1.0/60.0);assert(core.snapshot().stance==CharacterStance::Crouched);core.setMovementInput(1,0);core.addLookInput(0,0);for(int i=0;i<120;++i)core.advance(1.0/60.0);
 assert(core.diagnostics().journalValid);assert(core.diagnostics().worldValid);assert(core.diagnostics().weaponValid);assert(core.diagnostics().inputQueueValid);
 
+// Gameplay denial must not pollute integrity. Two same-tick fire requests make the
+// second a normal cooldown denial, not an integrity rejection.
+EngineCore denialCore;auto rejectedBefore=denialCore.diagnostics().integrity.commandsRejected;assert(denialCore.triggerFire());assert(denialCore.triggerFire());denialCore.advance(1.0/60.0);assert(denialCore.snapshot().shotsFired==1);assert(denialCore.diagnostics().integrity.commandsRejected==rejectedBefore);
+
+// Empty-mag fire queues an automatic reload through the same bounded command queue.
+EngineCore reloadCore;for(int shotIndex=0;shotIndex<30;++shotIndex){assert(reloadCore.triggerFire());reloadCore.advance(1.0/60.0);for(int i=0;i<6;++i)reloadCore.advance(1.0/60.0);}assert(reloadCore.snapshot().ammoInMagazine==0&&reloadCore.snapshot().reserveAmmo==90);auto rejectAtEmpty=reloadCore.diagnostics().integrity.commandsRejected;assert(reloadCore.triggerFire());reloadCore.advance(1.0/60.0);assert(reloadCore.snapshot().reloading);assert(reloadCore.diagnostics().integrity.commandsRejected==rejectAtEmpty);for(int i=0;i<150;++i)reloadCore.advance(1.0/60.0);assert(!reloadCore.snapshot().reloading&&reloadCore.snapshot().ammoInMagazine==30&&reloadCore.snapshot().reserveAmmo==60);
+
 EngineCore a,b;for(int i=0;i<240;++i){if(i%40==0){a.triggerFire();b.triggerFire();}a.setMovementInput(.7,.2);b.setMovementInput(.7,.2);a.addLookInput(.001,-.0004);b.addLookInput(.001,-.0004);a.advance(1.0/60.0);b.advance(1.0/60.0);}assert(a.deterministicStateHash()==b.deterministicStateHash());
 
 a.setMovementInput(std::numeric_limits<double>::quiet_NaN(),0);assert(a.diagnostics().inputQueue.rejectedInvalid>=1);auto before=a.snapshot();assert(!a.testOnlyExecuteInvariantViolation());auto after=a.snapshot();assert(before.playerX==after.playerX&&before.playerZ==after.playerZ&&a.diagnostics().integrity.commandsRolledBack>=1);
 for(int i=0;i<900;++i)a.advance(1.0/60.0);assert(a.diagnostics().retainedBlackBoxFrames==EngineCore::kBlackBoxCapacity);assert(a.diagnostics().observatory.retainedFrames==ObservatoryCore::kFrameCapacity);
 std::cout<<"METSE Build 008 Mega Combat Foundation Tests: PASS\n";
-std::cout<<"METSE Build 008 Aim Truth Regression Tests: PASS\n";}
+std::cout<<"METSE Build 008 Aim Truth Regression Tests: PASS\n";
+std::cout<<"METSE Gameplay Denial + Auto Reload Regression Tests: PASS\n";}
