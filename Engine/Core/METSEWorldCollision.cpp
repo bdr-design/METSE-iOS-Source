@@ -17,58 +17,41 @@ bool finiteVec(Vec3 value) noexcept {
 } // namespace
 
 WorldCollisionCore::WorldCollisionCore() noexcept {
-    // -------------------------------------------------------------------------
-    // Build 008 / 009-A..E compatibility anchors. Never reorder or reshape
-    // these six entries without deliberately updating the legacy regressions.
-    // -------------------------------------------------------------------------
+    // Build 008 / 009-A..E compatibility anchors. Never reorder or reshape these six.
     obstacles_[0]={6,0,12,10,2.8,17,WorldMaterial::Concrete};
     obstacles_[1]={-14,0,8,-12,2.2,24,WorldMaterial::Steel};
     obstacles_[2]={-4,0,24,3,3.4,31,WorldMaterial::Concrete};
-    // Thin timber partition: intentionally penetration-testable while retaining the
-    // same established lane and raycast anchor used by Build 008 regressions.
     obstacles_[3]={14,0,-3,14.18,1.7,-1,WorldMaterial::Wood};
     obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
-    // Low overhead: crouch/prone can pass, standing cannot.
     obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
 
-    // -------------------------------------------------------------------------
-    // Build 009-F Battlefield Test Map.
-    // The map deliberately stays inside the established 96m x 96m world bounds.
-    // Geometry is authored only here so collision, LOS, cover extraction and Metal
-    // rendering consume one authoritative obstacle list.
-    //
-    // WEST / NORTH-WEST — dense urban test block.
-    // -------------------------------------------------------------------------
+    // Build 009-F battlefield geometry.
     obstacles_[6]={-38,0,14,-30,4.5,28,WorldMaterial::Brick};
     obstacles_[7]={-28,0,30,-18,5.0,40,WorldMaterial::Concrete};
     obstacles_[8]={-40,0,-6,-34,2.8,4,WorldMaterial::Glass};
     obstacles_[9]={-31,0,-10,-29,2.2,6,WorldMaterial::Brick};
-
-    // -------------------------------------------------------------------------
-    // EAST / SOUTH-EAST — industrial lanes: containers, warehouse, booth and a
-    // thin timber divider. These provide hard/soft material transitions and
-    // deliberate peek / flank routes without changing the legacy target lanes.
-    // -------------------------------------------------------------------------
     obstacles_[10]={26,0,-30,34,2.6,-24,WorldMaterial::Steel};
     obstacles_[11]={20,0,-20,28,2.6,-14,WorldMaterial::Steel};
     obstacles_[12]={32,0,-12,43,4.2,2,WorldMaterial::Concrete};
     obstacles_[13]={21,0,4,25,2.6,9,WorldMaterial::Glass};
     obstacles_[14]={30,0,10,30.18,1.9,18,WorldMaterial::Wood};
-
-    // -------------------------------------------------------------------------
-    // SOUTH / SOUTH-WEST — rocky/open test lanes. The soil berm is intentionally
-    // low cover while the rock blocks are hard terminal geometry.
-    // -------------------------------------------------------------------------
     obstacles_[15]={-34,0,-34,-28,2.4,-29,WorldMaterial::Rock};
     obstacles_[16]={-24,0,-38,-18,3.0,-32,WorldMaterial::Rock};
     obstacles_[17]={-8,0,-34,2,1.4,-31,WorldMaterial::Soil};
     obstacles_[18]={8,0,-38,14,2.1,-34,WorldMaterial::Rock};
-
-    // NORTH-EAST ruin: deliberately starts beyond the established second training
-    // target at z=26 so the Build 008 camera/target Aim Truth ray remains clear.
     obstacles_[19]={11,0,28,17,2.4,32,WorldMaterial::Brick};
-
     obstacleCount_=kMaxObstacles;
+
+    // Build 009-G traversable surface semantics. Small precise patches come first
+    // and therefore override broader sector patches. Areas outside every patch are Soil.
+    surfacePatches_[0]={25.0,-33.0,35.0,-21.0,WorldMaterial::Steel};
+    surfacePatches_[1]={-46.0,8.0,-16.0,46.0,WorldMaterial::Concrete};
+    surfacePatches_[2]={18.0,-34.0,46.0,22.0,WorldMaterial::Concrete};
+    surfacePatches_[3]={-46.0,-46.0,18.0,-24.0,WorldMaterial::Rock};
+    surfacePatches_[4]={-10.0,20.0,18.0,44.0,WorldMaterial::Concrete};
+    surfacePatches_[5]={-8.0,-10.0,8.0,12.0,WorldMaterial::Soil};
+    surfacePatchCount_=kMaxSurfacePatches;
+
     rebuildCoverCandidates();
 }
 
@@ -134,6 +117,22 @@ double WorldCollisionCore::clearanceHeightAt(double x,double z,double radius) co
     return clearance;
 }
 
+WorldMaterial WorldCollisionCore::surfaceMaterialAt(double x,double z) const noexcept {
+    if(!std::isfinite(x)||!std::isfinite(z)) return WorldMaterial::Soil;
+    for(std::size_t i=0;i<surfacePatchCount_;++i){
+        const auto& patch=surfacePatches_[i];
+        if(x>=patch.minX&&x<=patch.maxX&&z>=patch.minZ&&z<=patch.maxZ) return patch.material;
+    }
+    return WorldMaterial::Soil;
+}
+
+bool WorldCollisionCore::hasOverheadCover(Vec3 position,double maxHeightMeters) const noexcept {
+    if(!finiteVec(position)||!std::isfinite(maxHeightMeters)||maxHeightMeters<=0.05) return false;
+    const Vec3 top{position.x,position.y+maxHeightMeters,position.z};
+    const auto hit=raycastSegment(position,top);
+    return hit.hit && hit.point.y>position.y+0.02;
+}
+
 bool WorldCollisionCore::segmentAabb(Vec3 a,Vec3 b,const WorldObstacle& obstacle,double& tEntry,double& tExit,Vec3& normal) noexcept {
     const Vec3 delta{b.x-a.x,b.y-a.y,b.z-a.z};
     double tMin=0.0,tMax=1.0;
@@ -177,8 +176,6 @@ WorldRayHit WorldCollisionCore::raycastSegment(Vec3 a,Vec3 b) const noexcept {
             best.thicknessMeters=length*std::max(0.0,exit-entry);
         }
     }
-    // Ground is a terminal surface for the current battlefield prototype. It is Soil so
-    // material telemetry remains truthful even though the terrain mesh is procedural.
     if(a.y>=0.0&&b.y<0.0){
         const double t=a.y/(a.y-b.y);
         if(t<best.t){
@@ -210,7 +207,6 @@ void WorldCollisionCore::rebuildCoverCandidates() noexcept {
 
     for(std::size_t i=0;i<obstacleCount_;++i){
         const auto& obstacle=obstacles_[i];
-        // Overhead-only geometry cannot protect a standing chest and must never become cover.
         if(obstacle.minY>0.05||obstacle.maxY<1.15) continue;
         const double centerX=(obstacle.minX+obstacle.maxX)*0.5;
         const double centerZ=(obstacle.minZ+obstacle.maxZ)*0.5;
@@ -223,7 +219,8 @@ void WorldCollisionCore::rebuildCoverCandidates() noexcept {
 
 bool WorldCollisionCore::validate() const noexcept {
     if(!std::isfinite(minWorldX_)||!std::isfinite(maxWorldX_)||!std::isfinite(minWorldZ_)||!std::isfinite(maxWorldZ_)||
-       minWorldX_>=maxWorldX_||minWorldZ_>=maxWorldZ_||obstacleCount_>kMaxObstacles||coverCandidateCount_>kMaxCoverCandidates) return false;
+       minWorldX_>=maxWorldX_||minWorldZ_>=maxWorldZ_||obstacleCount_>kMaxObstacles||surfacePatchCount_>kMaxSurfacePatches||
+       coverCandidateCount_>kMaxCoverCandidates) return false;
     if(obstacleCount_<kLegacyObstacleCount) return false;
     for(std::size_t i=0;i<obstacleCount_;++i){
         const auto& obstacle=obstacles_[i];
@@ -232,6 +229,13 @@ bool WorldCollisionCore::validate() const noexcept {
            obstacle.minX>=obstacle.maxX||obstacle.minY>=obstacle.maxY||obstacle.minZ>=obstacle.maxZ) return false;
         if(obstacle.minX<=minWorldX_||obstacle.maxX>=maxWorldX_||obstacle.minZ<=minWorldZ_||obstacle.maxZ>=maxWorldZ_) return false;
         if(static_cast<std::uint8_t>(obstacle.material)>static_cast<std::uint8_t>(WorldMaterial::Rock)) return false;
+    }
+    for(std::size_t i=0;i<surfacePatchCount_;++i){
+        const auto& patch=surfacePatches_[i];
+        if(!std::isfinite(patch.minX)||!std::isfinite(patch.minZ)||!std::isfinite(patch.maxX)||!std::isfinite(patch.maxZ)||
+           patch.minX>=patch.maxX||patch.minZ>=patch.maxZ) return false;
+        if(patch.minX<minWorldX_||patch.maxX>maxWorldX_||patch.minZ<minWorldZ_||patch.maxZ>maxWorldZ_) return false;
+        if(static_cast<std::uint8_t>(patch.material)>static_cast<std::uint8_t>(WorldMaterial::Rock)) return false;
     }
     for(std::size_t i=0;i<coverCandidateCount_;++i){
         const auto& candidate=coverCandidates_[i];
