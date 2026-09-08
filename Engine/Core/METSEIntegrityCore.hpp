@@ -47,6 +47,7 @@ enum class EventKind : std::uint8_t {
     ReloadStarted,
     ReloadCompleted,
     DamageApplied,
+    TargetIncapacitated,
     TargetKilled,
     SprintIntentChanged,
     StanceChanged,
