@@ -14,19 +14,19 @@ metse::Vec3 normalize(metse::Vec3 v){const double l=length(v);return {v.x/l,v.y/
 int main(){using namespace metse;
     WorldCollisionCore world;
     assert(world.validate());
-    assert(world.obstacleCount()==8);
+    assert(world.obstacleCount()==6);
 
-    const auto glassHit=world.raycastSegment({-35,1,17},{-30,1,17});
-    assert(glassHit.hit&&glassHit.material==WorldMaterial::Glass);
-    assert(std::abs(glassHit.thicknessMeters-0.04)<0.002);
-    assert(glassHit.exitT>glassHit.t);
-    assert(glassHit.normal.x<-0.99&&std::abs(glassHit.normal.y)<1e-9&&std::abs(glassHit.normal.z)<1e-9);
+    // The ray contract exposes entry, exit, face normal, and physical thickness.
+    const auto woodHit=world.raycastSegment({13,1,-2},{15,1,-2});
+    assert(woodHit.hit&&woodHit.material==WorldMaterial::Wood);
+    assert(std::abs(woodHit.thicknessMeters-0.18)<0.002);
+    assert(woodHit.exitT>woodHit.t);
+    assert(woodHit.normal.x<-0.99&&std::abs(woodHit.normal.y)<1e-9&&std::abs(woodHit.normal.z)<1e-9);
+    const auto groundHit=world.raycastSegment({0,1,0},{0,-1,0});
+    assert(groundHit.hit&&groundHit.material==WorldMaterial::Soil&&groundHit.normal.y>0.99);
 
-    const auto brickHit=world.raycastSegment({25,1,-19.5},{30,1,-19.5});
-    assert(brickHit.hit&&brickHit.material==WorldMaterial::Brick);
-    assert(std::abs(brickHit.thicknessMeters-0.12)<0.002);
-    assert(brickHit.exitT>brickHit.t);
-
+    // All seven 009-C materials are valid even though the stable foundation map
+    // only instantiates the first three until the battlefield phase.
     for(WorldMaterial material:{WorldMaterial::Concrete,WorldMaterial::Steel,WorldMaterial::Wood,WorldMaterial::Brick,WorldMaterial::Glass,WorldMaterial::Soil,WorldMaterial::Rock})
         assert(MaterialCore::validateProfile(MaterialCore::ballistic(material)));
     assert(MaterialCore::ballistic(WorldMaterial::Glass).penetrable);
@@ -36,38 +36,27 @@ int main(){using namespace metse;
     assert(MaterialCore::ballistic(WorldMaterial::Steel).ricochetEligible);
     assert(!MaterialCore::ballistic(WorldMaterial::Soil).ricochetEligible);
 
-    DamageCore glassDamage;
-    BallisticsCore glassBallistics;
-    ShotSolution glassShot{};
-    glassShot.origin={-35,1,17};
-    glassShot.direction={1,0,0};
-    glassShot.muzzleVelocity=820;
-    glassShot.massKg=.004;
-    glassShot.correlationId=7001;
-    assert(glassBallistics.spawn(glassShot));
-    glassBallistics.fixedStep(1.0/60.0,world,glassDamage);
-    assert(glassBallistics.metrics().worldImpacts==1);
-    assert(glassBallistics.metrics().penetrations==1);
-    assert(glassBallistics.metrics().terminalWorldImpacts==0);
-    assert(glassBallistics.activeCount()==1);
-    assert(glassBallistics.validate());
+    // Thickness-aware penetration: this rifle can cross the thin timber partition,
+    // retaining bounded velocity and continuing inside the same fixed slice.
+    DamageCore woodDamage;
+    BallisticsCore woodBallistics;
+    ShotSolution woodShot{};
+    woodShot.origin={13,1,-2};
+    woodShot.direction={1,0,0};
+    woodShot.muzzleVelocity=820;
+    woodShot.massKg=.004;
+    woodShot.correlationId=7001;
+    assert(woodBallistics.spawn(woodShot));
+    woodBallistics.fixedStep(1.0/60.0,world,woodDamage);
+    assert(woodBallistics.metrics().worldImpacts==1);
+    assert(woodBallistics.metrics().penetrations==1);
+    assert(woodBallistics.metrics().terminalWorldImpacts==0);
+    assert(woodBallistics.activeCount()==1);
+    assert(woodBallistics.projectiles()[0].penetrations==1);
+    assert(woodBallistics.projectiles()[0].position.x>14.18);
+    assert(woodBallistics.validate());
 
-    DamageCore brickDamage;
-    BallisticsCore brickBallistics;
-    ShotSolution brickShot{};
-    brickShot.origin={25,1,-19.5};
-    brickShot.direction={1,0,0};
-    brickShot.muzzleVelocity=820;
-    brickShot.massKg=.004;
-    brickShot.correlationId=7002;
-    assert(brickBallistics.spawn(brickShot));
-    brickBallistics.fixedStep(1.0/60.0,world,brickDamage);
-    assert(brickBallistics.metrics().worldImpacts==1);
-    assert(brickBallistics.metrics().penetrations==1);
-    assert(brickBallistics.metrics().terminalWorldImpacts==0);
-    assert(brickBallistics.activeCount()==1);
-    assert(brickBallistics.validate());
-
+    // Glancing steel impact must ricochet at most once and reverse the normal axis.
     DamageCore steelDamage;
     BallisticsCore steelBallistics;
     ShotSolution steelShot{};
@@ -75,7 +64,7 @@ int main(){using namespace metse;
     steelShot.direction=normalize({0.2,0,1.0});
     steelShot.muzzleVelocity=820;
     steelShot.massKg=.004;
-    steelShot.correlationId=7003;
+    steelShot.correlationId=7002;
     assert(steelBallistics.spawn(steelShot));
     steelBallistics.fixedStep(1.0/60.0,world,steelDamage);
     assert(steelBallistics.metrics().worldImpacts>=1);
@@ -87,6 +76,8 @@ int main(){using namespace metse;
     assert(steelProjectile.velocity.x<0.0);
     assert(steelBallistics.validate());
 
+    // Head-on concrete remains terminal; glancing logic cannot turn a direct strike
+    // into a ricochet simply because the surface supports ricochet in principle.
     DamageCore concreteDamage;
     BallisticsCore concreteBallistics;
     ShotSolution concreteShot{};
@@ -94,7 +85,7 @@ int main(){using namespace metse;
     concreteShot.direction={1,0,0};
     concreteShot.muzzleVelocity=820;
     concreteShot.massKg=.004;
-    concreteShot.correlationId=7004;
+    concreteShot.correlationId=7003;
     assert(concreteBallistics.spawn(concreteShot));
     concreteBallistics.fixedStep(1.0/60.0,world,concreteDamage);
     assert(concreteBallistics.metrics().worldImpacts==1);
