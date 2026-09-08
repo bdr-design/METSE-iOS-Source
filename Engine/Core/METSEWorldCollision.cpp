@@ -42,14 +42,16 @@ WorldCollisionCore::WorldCollisionCore() noexcept {
     obstacles_[19]={11,0,28,17,2.4,32,WorldMaterial::Brick};
     obstacleCount_=kMaxObstacles;
 
-    // Build 009-G traversable surface semantics. Small precise patches come first
-    // and therefore override broader sector patches. Areas outside every patch are Soil.
-    surfacePatches_[0]={25.0,-33.0,35.0,-21.0,WorldMaterial::Steel};
-    surfacePatches_[1]={-46.0,8.0,-16.0,46.0,WorldMaterial::Concrete};
-    surfacePatches_[2]={18.0,-34.0,46.0,22.0,WorldMaterial::Concrete};
-    surfacePatches_[3]={-46.0,-46.0,18.0,-24.0,WorldMaterial::Rock};
-    surfacePatches_[4]={-10.0,20.0,18.0,44.0,WorldMaterial::Concrete};
-    surfacePatches_[5]={-8.0,-10.0,8.0,12.0,WorldMaterial::Soil};
+    // Build 009-G traversable surface semantics. The six non-overlapping patches
+    // represent the six explicit floor finishes; areas outside every patch are Soil.
+    // Their sampled centers are intentionally outside collision solids so every
+    // material can be reached by the character rather than existing only in a wall.
+    surfacePatches_[0]={35.0,-31.0,43.0,-23.0,WorldMaterial::Steel};
+    surfacePatches_[1]={-28.0,10.0,-18.0,26.0,WorldMaterial::Concrete};
+    surfacePatches_[2]={-46.0,-44.0,-36.0,-28.0,WorldMaterial::Rock};
+    surfacePatches_[3]={18.0,12.0,28.0,22.0,WorldMaterial::Wood};
+    surfacePatches_[4]={-17.0,32.0,-7.0,44.0,WorldMaterial::Brick};
+    surfacePatches_[5]={-46.0,-18.0,-38.0,-8.0,WorldMaterial::Glass};
     surfacePatchCount_=kMaxSurfacePatches;
 
     rebuildCoverCandidates();
@@ -131,6 +133,35 @@ bool WorldCollisionCore::hasOverheadCover(Vec3 position,double maxHeightMeters) 
     const Vec3 top{position.x,position.y+maxHeightMeters,position.z};
     const auto hit=raycastSegment(position,top);
     return hit.hit && hit.point.y>position.y+0.02;
+}
+
+WorldAcousticProbe WorldCollisionCore::acousticProbeAt(Vec3 position) const noexcept {
+    WorldAcousticProbe probe{};
+    if(!finiteVec(position)) return probe;
+
+    const std::array<Vec3,kAcousticProbeRayCount> offsets{{
+        {0.0,kAcousticProbeHeightMeters,0.0},
+        {kAcousticProbeHorizontalMeters,0.0,0.0},
+        {-kAcousticProbeHorizontalMeters,0.0,0.0},
+        {0.0,0.0,kAcousticProbeHorizontalMeters},
+        {0.0,0.0,-kAcousticProbeHorizontalMeters}
+    }};
+    for(std::size_t i=0;i<offsets.size();++i){
+        const auto& offset=offsets[i];
+        const Vec3 endpoint{position.x+offset.x,position.y+offset.y,position.z+offset.z};
+        const auto hit=raycastSegment(position,endpoint);
+        ++probe.raysCast;
+        if(!hit.hit || hit.t>=1.0-1e-9) continue;
+        ++probe.occludedRays;
+        if(i==0) probe.overheadBlocked=true;
+    }
+
+    // A roof alone can be an outdoor canopy. Requiring two bounded horizontal
+    // returns prevents that presentation case from receiving the indoor firing tail.
+    const std::uint8_t horizontalOcclusions=static_cast<std::uint8_t>(
+        probe.occludedRays-(probe.overheadBlocked?1u:0u));
+    probe.indoor=probe.overheadBlocked&&horizontalOcclusions>=2;
+    return probe;
 }
 
 bool WorldCollisionCore::segmentAabb(Vec3 a,Vec3 b,const WorldObstacle& obstacle,double& tEntry,double& tExit,Vec3& normal) noexcept {
@@ -237,6 +268,12 @@ bool WorldCollisionCore::validate() const noexcept {
            patch.minX>=patch.maxX||patch.minZ>=patch.maxZ) return false;
         if(patch.minX<minWorldX_||patch.maxX>maxWorldX_||patch.minZ<minWorldZ_||patch.maxZ>maxWorldZ_) return false;
         if(static_cast<std::uint8_t>(patch.material)>static_cast<std::uint8_t>(WorldMaterial::Rock)) return false;
+        for(std::size_t j=i+1;j<surfacePatchCount_;++j){
+            const auto& other=surfacePatches_[j];
+            const bool overlapsX=std::min(patch.maxX,other.maxX)>std::max(patch.minX,other.minX)+1e-9;
+            const bool overlapsZ=std::min(patch.maxZ,other.maxZ)>std::max(patch.minZ,other.minZ)+1e-9;
+            if(overlapsX&&overlapsZ) return false;
+        }
     }
     for(std::size_t i=0;i<coverCandidateCount_;++i){
         const auto& candidate=coverCandidates_[i];

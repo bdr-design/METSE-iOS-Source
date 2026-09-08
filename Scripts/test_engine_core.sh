@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-CXX="${CXX:-clang++}"
+if [[ -z "${CXX:-}" ]]; then
+  if command -v clang++ >/dev/null 2>&1; then
+    CXX="clang++"
+  else
+    CXX="c++"
+  fi
+fi
 OUT_DIR="${TMPDIR:-/tmp}/metse-build009-tests"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"

@@ -6,6 +6,8 @@
 
 namespace metse {
 
+class WorldCollisionCore;
+
 enum class VisibilityTier:std::uint8_t { Full=0, Reduced=1, Minimal=2, Dormant=3 };
 
 struct VisibilityEntity {
@@ -13,6 +15,7 @@ struct VisibilityEntity {
     Vec3 position{};
     VisibilityTier tier=VisibilityTier::Dormant;
     bool alive=true;
+    bool lineOfSight=false;
 };
 
 struct VisibilityReport {
@@ -21,6 +24,7 @@ struct VisibilityReport {
     std::uint32_t minimal=0;
     std::uint32_t dormant=0;
     std::uint32_t evaluated=0;
+    std::uint32_t occluded=0;
     std::uint32_t budgetDemotions=0;
 };
 
@@ -33,7 +37,7 @@ public:
 
     void reset() noexcept;
     void syncTarget(std::size_t index,std::uint32_t id,Vec3 position,bool alive) noexcept;
-    void update(Vec3 camera,double yaw) noexcept;
+    void update(Vec3 camera,double yaw,const WorldCollisionCore& world) noexcept;
     [[nodiscard]] VisibilityReport report() const noexcept;
     [[nodiscard]] const std::array<VisibilityEntity,kMaxEntities>& entities() const noexcept { return entities_; }
     [[nodiscard]] std::size_t count() const noexcept { return count_; }
@@ -43,6 +47,7 @@ private:
     std::array<VisibilityEntity,kMaxEntities> entities_{};
     std::size_t count_=0;
     std::uint32_t lastEvaluated_=0;
+    std::uint32_t lastOccluded_=0;
     std::uint32_t lastBudgetDemotions_=0;
 };
 

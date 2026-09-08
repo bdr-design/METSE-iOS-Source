@@ -1,4 +1,5 @@
 #pragma once
+#include "METSEBallisticsCore.hpp"
 #include "METSECharacterMotor.hpp"
 #include "METSEWorldCollision.hpp"
 #include <array>
@@ -51,8 +52,9 @@ struct AudioFXReport {
     std::uint64_t indoorShots=0;
     std::uint64_t bulletCracks=0;
     std::uint64_t nearMisses=0;
+    std::uint64_t fxSpawnRequests=0;
     std::uint64_t fxSpawned=0;
-    std::uint64_t fxReused=0;
+    std::uint64_t fxDropped=0;
     std::uint32_t activeFX=0;
     std::uint32_t retainedCues=0;
 };
@@ -61,13 +63,24 @@ class AudioFXCore final {
 public:
     static constexpr std::size_t kCueCapacity=64;
     static constexpr std::size_t kFXCapacity=48;
-    static constexpr std::size_t kProjectileCueMemoryCapacity=64;
+    static constexpr std::size_t kProjectileCueMemoryCapacity=BallisticsCore::kMaxProjectiles;
+    static constexpr double kCrackMinimumSpeedMetersPerSecond=360.0;
+    static constexpr double kCrackRadiusMeters=12.0;
+    static constexpr double kNearMissMinimumSpeedMetersPerSecond=80.0;
+    static constexpr double kNearMissRadiusMeters=2.25;
 
     void reset() noexcept;
     void fixedStep(double dt) noexcept;
-    void observeMovement(Vec3 previousPosition,Vec3 currentPosition,double horizontalSpeed,CharacterGait gait,const WorldCollisionCore& world) noexcept;
+    void observeMovement(Vec3 previousPosition,
+                         Vec3 currentPosition,
+                         double horizontalSpeed,
+                         CharacterGait gait,
+                         bool grounded,
+                         const WorldCollisionCore& world) noexcept;
     void observeShot(Vec3 origin,std::uint64_t correlationId,const WorldCollisionCore& world) noexcept;
-    void observeProjectileSegment(Vec3 from,Vec3 to,Vec3 listener,double projectileSpeed,std::uint64_t correlationId,bool hostileToListener) noexcept;
+    void observeProjectileSegment(const ProjectileSegmentObservation& segment,
+                                  Vec3 listener,
+                                  bool hostileToListener) noexcept;
 
     [[nodiscard]] bool cueBySequence(std::uint64_t sequence,AudioCue& out) const noexcept;
     [[nodiscard]] const std::array<FXInstance,kFXCapacity>& fxInstances() const noexcept { return fx_; }
@@ -76,18 +89,32 @@ public:
     [[nodiscard]] std::uint64_t deterministicFingerprint() const noexcept;
     [[nodiscard]] bool validate() const noexcept;
 
+    [[nodiscard]] static double footstepSpacingMeters(CharacterGait gait) noexcept;
+    [[nodiscard]] static double footstepGain(CharacterGait gait) noexcept;
+
 private:
     struct ProjectileCueMemory {
         std::uint64_t correlationId=0;
         bool crackEmitted=false;
         bool nearMissEmitted=false;
+        bool terminated=false;
     };
 
-    void emitCue(AudioCueKind kind,Vec3 position,WorldMaterial material,double gain,double pitch,std::uint64_t correlationId,bool indoor) noexcept;
-    void spawnFX(FXKind kind,Vec3 position,Vec3 velocity,WorldMaterial material,double lifetime,double intensity,std::uint64_t correlationId) noexcept;
+    void emitCue(AudioCueKind kind,
+                 Vec3 position,
+                 WorldMaterial material,
+                 double gain,
+                 double pitch,
+                 std::uint64_t correlationId,
+                 bool indoor) noexcept;
+    bool spawnFX(FXKind kind,
+                 Vec3 position,
+                 Vec3 velocity,
+                 WorldMaterial material,
+                 double lifetime,
+                 double intensity,
+                 std::uint64_t correlationId) noexcept;
     ProjectileCueMemory& projectileMemory(std::uint64_t correlationId) noexcept;
-    static double stepSpacing(CharacterGait gait) noexcept;
-    static double stepGain(CharacterGait gait) noexcept;
 
     std::array<AudioCue,kCueCapacity> cues_{};
     std::size_t cueWrite_=0;

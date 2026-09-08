@@ -23,6 +23,13 @@ struct WorldSurfacePatch {
     WorldMaterial material=WorldMaterial::Soil;
 };
 
+struct WorldAcousticProbe {
+    bool indoor=false;
+    bool overheadBlocked=false;
+    std::uint8_t raysCast=0;
+    std::uint8_t occludedRays=0;
+};
+
 struct CollisionResult {
     double x=0.0, z=0.0;
     bool hitX=false, hitZ=false;
@@ -54,6 +61,9 @@ public:
     static constexpr std::size_t kMaxObstacles=20;
     static constexpr std::size_t kMaxCoverCandidates=kMaxObstacles*4;
     static constexpr std::size_t kMaxSurfacePatches=6;
+    static constexpr std::uint8_t kAcousticProbeRayCount=5;
+    static constexpr double kAcousticProbeHeightMeters=5.0;
+    static constexpr double kAcousticProbeHorizontalMeters=18.0;
 
     WorldCollisionCore() noexcept;
     [[nodiscard]] CollisionResult resolve(double previousX,double previousZ,double desiredX,double desiredZ,double radius,double capsuleHeight) const noexcept;
@@ -61,6 +71,7 @@ public:
     [[nodiscard]] double clearanceHeightAt(double x,double z,double radius) const noexcept;
     [[nodiscard]] WorldMaterial surfaceMaterialAt(double x,double z) const noexcept;
     [[nodiscard]] bool hasOverheadCover(Vec3 position,double maxHeightMeters=6.0) const noexcept;
+    [[nodiscard]] WorldAcousticProbe acousticProbeAt(Vec3 position) const noexcept;
     [[nodiscard]] const std::array<WorldObstacle,kMaxObstacles>& obstacles() const noexcept { return obstacles_; }
     [[nodiscard]] std::size_t obstacleCount() const noexcept { return obstacleCount_; }
     [[nodiscard]] const std::array<WorldSurfacePatch,kMaxSurfacePatches>& surfacePatches() const noexcept { return surfacePatches_; }

@@ -11,6 +11,20 @@ namespace {
 
 bool eq(double a,double b,double epsilon=1e-8) noexcept { return std::abs(a-b)<=epsilon; }
 
+struct AudioProjectileObserverContext {
+    AudioFXCore *audio=nullptr;
+    Vec3 listener{};
+    bool hostileToListener=false;
+};
+
+void observeProjectileForAudio(void *rawContext,
+                               const ProjectileSegmentObservation& segment) noexcept {
+    auto *context=static_cast<AudioProjectileObserverContext *>(rawContext);
+    if(context==nullptr||context->audio==nullptr) return;
+    context->audio->observeProjectileSegment(segment,context->listener,
+                                              context->hostileToListener);
+}
+
 template<std::size_t N>
 void put64(std::array<std::uint8_t,N>& buffer,std::size_t& cursor,std::uint64_t value) noexcept {
     if(cursor+8>N) return;
@@ -60,7 +74,7 @@ void EngineCore::resetState() noexcept {
         const auto& target=damage_.targets()[i];
         visibility_.syncTarget(i,target.id,target.position,target.alive);
     }
-    visibility_.update(cameraPosition(),character_.cameraYaw());
+    visibility_.update(cameraPosition(),character_.cameraYaw(),world_);
     initializeTacticalAI();
     syncSnapshot();
 }
@@ -246,18 +260,25 @@ void EngineCore::fixedStep() noexcept {
     const auto& acceptedCharacterState=character_.state();
     audioFX_.observeMovement(previousPosition,
                              {acceptedCharacterState.x,acceptedCharacterState.y,acceptedCharacterState.z},
-                             character_.horizontalSpeed(),acceptedCharacterState.gait,world_);
+                             character_.horizontalSpeed(),acceptedCharacterState.gait,
+                             acceptedCharacterState.grounded,world_);
 
     updateWeaponObstruction();
     const bool wasReloading=weapon_.state().reloading;
     weapon_.fixedStep(config_.fixedStepSeconds,character_.horizontalSpeed(),moveStrafe_,character_.state().sprinting);
     const bool reloadCompleted=wasReloading && !weapon_.state().reloading;
 
+    // The only production projectile owner today is the player. Segment observation is
+    // wired now, but remains explicitly non-hostile to the player listener until the
+    // later Player/Team/Faction contract can provide real provenance. No AI damage or
+    // synthetic hostile-projectile special case is introduced by Build 009-G.
+    AudioProjectileObserverContext projectileAudio{&audioFX_,cameraPosition(),false};
     // Tactical locomotion is advanced before projectile tracing. Its accepted position
     // is mirrored one-way into DamageCore, keeping ballistic target truth aligned with
     // the simulation-owned AI position without introducing a second movement owner.
     stepTacticalAI();
-    ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_);
+    ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_,
+                          &observeProjectileForAudio,&projectileAudio);
     damage_.fixedStep(config_.fixedStepSeconds);
     // A same-slice injury can immediately remove an AI combatant. Clear action/fire
     // authorization before invariant validation and before the snapshot is published.
@@ -277,7 +298,7 @@ void EngineCore::fixedStep() noexcept {
         const auto& target=damage_.targets()[i];
         visibility_.syncTarget(i,target.id,target.position,target.alive);
     }
-    visibility_.update(cameraPosition(),character_.cameraYaw());
+    visibility_.update(cameraPosition(),character_.cameraYaw(),world_);
 
     state_.simulationSeconds+=config_.fixedStepSeconds;
     ++state_.simulationTick;
@@ -401,11 +422,14 @@ bool EngineCore::validateInvariants() const noexcept {
        state_.tacticalAI.engagedAgents!=ai.engagedAgents || state_.tacticalAI.decisionsExecuted!=ai.decisionsExecuted ||
        state_.visibility.full!=visibility.full || state_.visibility.reduced!=visibility.reduced ||
        state_.visibility.minimal!=visibility.minimal || state_.visibility.dormant!=visibility.dormant ||
-       state_.visibility.evaluated!=visibility.evaluated || state_.visibility.budgetDemotions!=visibility.budgetDemotions ||
+       state_.visibility.evaluated!=visibility.evaluated || state_.visibility.occluded!=visibility.occluded ||
+       state_.visibility.budgetDemotions!=visibility.budgetDemotions ||
        state_.audioFX.cuesEmitted!=audio.cuesEmitted || state_.audioFX.footsteps!=audio.footsteps ||
        state_.audioFX.outdoorShots!=audio.outdoorShots || state_.audioFX.indoorShots!=audio.indoorShots ||
        state_.audioFX.bulletCracks!=audio.bulletCracks || state_.audioFX.nearMisses!=audio.nearMisses ||
-       state_.audioFX.activeFX!=audio.activeFX || state_.audioFX.retainedCues!=audio.retainedCues) return false;
+       state_.audioFX.fxSpawnRequests!=audio.fxSpawnRequests || state_.audioFX.fxSpawned!=audio.fxSpawned ||
+       state_.audioFX.fxDropped!=audio.fxDropped || state_.audioFX.activeFX!=audio.activeFX ||
+       state_.audioFX.retainedCues!=audio.retainedCues) return false;
 
     const std::size_t synchronizedCount=std::min(damage_.targetCount(),tacticalAI_.agentCount());
     for(std::size_t i=0;i<synchronizedCount;++i){
@@ -501,7 +525,8 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     put64(buffer,cursor,state_.tacticalAI.decisionsExecuted);
     put64(buffer,cursor,state_.visibility.full); put64(buffer,cursor,state_.visibility.reduced);
     put64(buffer,cursor,state_.visibility.minimal); put64(buffer,cursor,state_.visibility.dormant);
-    put64(buffer,cursor,state_.visibility.evaluated); put64(buffer,cursor,state_.visibility.budgetDemotions);
+    put64(buffer,cursor,state_.visibility.evaluated); put64(buffer,cursor,state_.visibility.occluded);
+    put64(buffer,cursor,state_.visibility.budgetDemotions);
     put64(buffer,cursor,audioFX_.deterministicFingerprint());
     put64(buffer,cursor,damage_.resultSequence());
     for(std::size_t i=0;i<visibility_.count();++i){
@@ -509,6 +534,7 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         put64(buffer,cursor,entity.id);
         put64(buffer,cursor,static_cast<std::uint64_t>(entity.tier));
         put64(buffer,cursor,entity.alive?1u:0u);
+        put64(buffer,cursor,entity.lineOfSight?1u:0u);
     }
     for(std::size_t i=0;i<damage_.targetCount();++i){
         const auto& target=damage_.targets()[i];
