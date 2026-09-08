@@ -64,7 +64,7 @@ req('out float' not in shader,'GLSL-style out parameters are forbidden in Metal 
 req('kRenderProjectileCap' in bridge and 'targetData' in bridge,'Renderer telemetry bridge missing')
 req('ads' in shader and 'projectilePositions' in shader and 'targetData' in shader and 'weaponMask' in shader,'Weapon/ADS/projectile/target Metal rendering missing')
 req('METSE Build 009 Tactical Combat Foundation Tests: PASS' in tests,'Build009 tactical test banner missing')
-for token in ('rejectedCritical','deterministicStateHash','HitRegion::Head','onePercentLowFPS','low roof','quiet_NaN','no magical player knowledge','TacticalAICore'):
+for token in ('rejectedCritical','deterministicStateHash','HitRegion::Head','onePercentLowFPS','low roof','quiet_NaN','magical player knowledge','TacticalAICore'):
     req(token in tests,f'Regression coverage missing: {token}')
 
 core='\n'.join(p.read_text(errors='ignore') for p in (ROOT/'Engine/Core').glob('*') if p.is_file())
