@@ -14,6 +14,15 @@ struct WorldObstacle {
     WorldMaterial material=WorldMaterial::Concrete;
 };
 
+// Traversable surface semantics live beside collision geometry so footsteps never
+// invent a second map. Patches are semantic overlays only; collision remains the
+// authoritative obstacle set and Soil remains the default terrain surface.
+struct WorldSurfacePatch {
+    double minX=0.0, minZ=0.0;
+    double maxX=0.0, maxZ=0.0;
+    WorldMaterial material=WorldMaterial::Soil;
+};
+
 struct CollisionResult {
     double x=0.0, z=0.0;
     bool hitX=false, hitZ=false;
@@ -32,8 +41,6 @@ struct WorldRayHit {
     double thicknessMeters=0.0;
 };
 
-// Cover candidates are derived once from authoritative world obstacle geometry.
-// They are not authored gameplay points and do not create a second navigation/world SSOT.
 struct WorldCoverCandidate {
     Vec3 position{};
     Vec3 outwardNormal{};
@@ -43,19 +50,21 @@ struct WorldCoverCandidate {
 
 class WorldCollisionCore final {
 public:
-    // Build 009-F battlefield remains intentionally compact. Twenty authoritative
-    // collision primitives are enough to create urban / industrial / rocky test
-    // lanes while keeping every hot-path loop strictly bounded on iPhone.
     static constexpr std::size_t kLegacyObstacleCount=6;
     static constexpr std::size_t kMaxObstacles=20;
     static constexpr std::size_t kMaxCoverCandidates=kMaxObstacles*4;
+    static constexpr std::size_t kMaxSurfacePatches=6;
 
     WorldCollisionCore() noexcept;
     [[nodiscard]] CollisionResult resolve(double previousX,double previousZ,double desiredX,double desiredZ,double radius,double capsuleHeight) const noexcept;
     [[nodiscard]] WorldRayHit raycastSegment(Vec3 from,Vec3 to) const noexcept;
     [[nodiscard]] double clearanceHeightAt(double x,double z,double radius) const noexcept;
+    [[nodiscard]] WorldMaterial surfaceMaterialAt(double x,double z) const noexcept;
+    [[nodiscard]] bool hasOverheadCover(Vec3 position,double maxHeightMeters=6.0) const noexcept;
     [[nodiscard]] const std::array<WorldObstacle,kMaxObstacles>& obstacles() const noexcept { return obstacles_; }
     [[nodiscard]] std::size_t obstacleCount() const noexcept { return obstacleCount_; }
+    [[nodiscard]] const std::array<WorldSurfacePatch,kMaxSurfacePatches>& surfacePatches() const noexcept { return surfacePatches_; }
+    [[nodiscard]] std::size_t surfacePatchCount() const noexcept { return surfacePatchCount_; }
     [[nodiscard]] const std::array<WorldCoverCandidate,kMaxCoverCandidates>& coverCandidates() const noexcept { return coverCandidates_; }
     [[nodiscard]] std::size_t coverCandidateCount() const noexcept { return coverCandidateCount_; }
     [[nodiscard]] double minWorldX() const noexcept { return minWorldX_; }
@@ -72,6 +81,8 @@ private:
 
     std::array<WorldObstacle,kMaxObstacles> obstacles_{};
     std::size_t obstacleCount_=0;
+    std::array<WorldSurfacePatch,kMaxSurfacePatches> surfacePatches_{};
+    std::size_t surfacePatchCount_=0;
     std::array<WorldCoverCandidate,kMaxCoverCandidates> coverCandidates_{};
     std::size_t coverCandidateCount_=0;
     double minWorldX_=-48.0, maxWorldX_=48.0, minWorldZ_=-48.0, maxWorldZ_=48.0;
