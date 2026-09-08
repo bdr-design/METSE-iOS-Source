@@ -13,6 +13,7 @@ COMMON=(
   Engine/Core/METSEDamageCore.cpp
   Engine/Core/METSEBallisticsCore.cpp
   Engine/Core/METSEVisibilityCore.cpp
+  Engine/Core/METSEAudioFXCore.cpp
   Engine/Core/METSEObservatoryCore.cpp
   Engine/Core/METSEIntegrityCore.cpp
   Engine/Core/METSETacticalAICore.cpp
@@ -34,3 +35,6 @@ FLAGS=(-std=c++20 -DMETSE_TESTING -Wall -Wextra -Wpedantic -Werror)
 
 "$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/BattlefieldMapTests.cpp -o "$OUT_DIR/battlefield-map-tests"
 "$OUT_DIR/battlefield-map-tests"
+
+"$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/AudioFXVisibilityTests.cpp -o "$OUT_DIR/audio-fx-visibility-tests"
+"$OUT_DIR/audio-fx-visibility-tests"
