@@ -31,3 +31,6 @@ FLAGS=(-std=c++20 -DMETSE_TESTING -Wall -Wextra -Wpedantic -Werror)
 
 "$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/TacticalAIActionCoverTests.cpp -o "$OUT_DIR/tactical-ai-action-cover-tests"
 "$OUT_DIR/tactical-ai-action-cover-tests"
+
+"$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/BattlefieldMapTests.cpp -o "$OUT_DIR/battlefield-map-tests"
+"$OUT_DIR/battlefield-map-tests"

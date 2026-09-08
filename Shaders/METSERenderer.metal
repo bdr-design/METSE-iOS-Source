@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
-constant uint kMaxObstacles=8;
+constant uint kMaxObstacles=20;
 constant uint kMaxProjectiles=8;
 constant uint kMaxTargets=4;
 struct VSOut{float4 position[[position]];};

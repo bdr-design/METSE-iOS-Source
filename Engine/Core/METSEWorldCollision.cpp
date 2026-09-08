@@ -17,6 +17,10 @@ bool finiteVec(Vec3 value) noexcept {
 } // namespace
 
 WorldCollisionCore::WorldCollisionCore() noexcept {
+    // -------------------------------------------------------------------------
+    // Build 008 / 009-A..E compatibility anchors. Never reorder or reshape
+    // these six entries without deliberately updating the legacy regressions.
+    // -------------------------------------------------------------------------
     obstacles_[0]={6,0,12,10,2.8,17,WorldMaterial::Concrete};
     obstacles_[1]={-14,0,8,-12,2.2,24,WorldMaterial::Steel};
     obstacles_[2]={-4,0,24,3,3.4,31,WorldMaterial::Concrete};
@@ -26,10 +30,45 @@ WorldCollisionCore::WorldCollisionCore() noexcept {
     obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
     // Low overhead: crouch/prone can pass, standing cannot.
     obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
-    // Brick/Glass/Soil/Rock are supported by the material contract now; they are
-    // introduced into battlefield geometry during 009-F rather than mutating the
-    // established Build 008 Aim Truth test layout mid-foundation.
-    obstacleCount_=6;
+
+    // -------------------------------------------------------------------------
+    // Build 009-F Battlefield Test Map.
+    // The map deliberately stays inside the established 96m x 96m world bounds.
+    // Geometry is authored only here so collision, LOS, cover extraction and Metal
+    // rendering consume one authoritative obstacle list.
+    //
+    // WEST / NORTH-WEST — dense urban test block.
+    // -------------------------------------------------------------------------
+    obstacles_[6]={-38,0,14,-30,4.5,28,WorldMaterial::Brick};
+    obstacles_[7]={-28,0,30,-18,5.0,40,WorldMaterial::Concrete};
+    obstacles_[8]={-40,0,-6,-34,2.8,4,WorldMaterial::Glass};
+    obstacles_[9]={-31,0,-10,-29,2.2,6,WorldMaterial::Brick};
+
+    // -------------------------------------------------------------------------
+    // EAST / SOUTH-EAST — industrial lanes: containers, warehouse, booth and a
+    // thin timber divider. These provide hard/soft material transitions and
+    // deliberate peek / flank routes without changing the legacy target lanes.
+    // -------------------------------------------------------------------------
+    obstacles_[10]={26,0,-30,34,2.6,-24,WorldMaterial::Steel};
+    obstacles_[11]={20,0,-20,28,2.6,-14,WorldMaterial::Steel};
+    obstacles_[12]={32,0,-12,43,4.2,2,WorldMaterial::Concrete};
+    obstacles_[13]={21,0,4,25,2.6,9,WorldMaterial::Glass};
+    obstacles_[14]={30,0,10,30.18,1.9,18,WorldMaterial::Wood};
+
+    // -------------------------------------------------------------------------
+    // SOUTH / SOUTH-WEST — rocky/open test lanes. The soil berm is intentionally
+    // low cover while the rock blocks are hard terminal geometry.
+    // -------------------------------------------------------------------------
+    obstacles_[15]={-34,0,-34,-28,2.4,-29,WorldMaterial::Rock};
+    obstacles_[16]={-24,0,-38,-18,3.0,-32,WorldMaterial::Rock};
+    obstacles_[17]={-8,0,-34,2,1.4,-31,WorldMaterial::Soil};
+    obstacles_[18]={8,0,-38,14,2.1,-34,WorldMaterial::Rock};
+
+    // NORTH-EAST ruin: deliberately starts beyond the established second training
+    // target at z=26 so the Build 008 camera/target Aim Truth ray remains clear.
+    obstacles_[19]={11,0,28,17,2.4,32,WorldMaterial::Brick};
+
+    obstacleCount_=kMaxObstacles;
     rebuildCoverCandidates();
 }
 
@@ -185,6 +224,7 @@ void WorldCollisionCore::rebuildCoverCandidates() noexcept {
 bool WorldCollisionCore::validate() const noexcept {
     if(!std::isfinite(minWorldX_)||!std::isfinite(maxWorldX_)||!std::isfinite(minWorldZ_)||!std::isfinite(maxWorldZ_)||
        minWorldX_>=maxWorldX_||minWorldZ_>=maxWorldZ_||obstacleCount_>kMaxObstacles||coverCandidateCount_>kMaxCoverCandidates) return false;
+    if(obstacleCount_<kLegacyObstacleCount) return false;
     for(std::size_t i=0;i<obstacleCount_;++i){
         const auto& obstacle=obstacles_[i];
         if(!std::isfinite(obstacle.minX)||!std::isfinite(obstacle.minY)||!std::isfinite(obstacle.minZ)||

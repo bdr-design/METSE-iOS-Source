@@ -23,7 +23,7 @@ assert(sha256Hex(sha256("abc"))=="ba7816bf8f01cfea414140de5dae2223b00361a396177a
 InputCommandQueue q;assert(q.validate());for(int i=0;i<500;++i){assert(q.pushMove(1,0));assert(q.pushLook(.001,.001));}assert(q.size()<=4);assert(q.metrics().coalesced>900);assert(q.pushFire());assert(q.pushMove(.5,.2));assert(q.pushFire());InputCommand c{};std::uint64_t last=0;int fires=0;while(q.pop(c)){assert(c.sequence>last);last=c.sequence;if(c.kind==InputCommandKind::Fire)++fires;}assert(fires==2);
 q.reset();for(std::size_t i=0;i<InputCommandQueue::kCapacity;++i)assert(q.pushFire());assert(!q.pushReload());assert(q.metrics().rejectedCritical==1);
 
-WorldCollisionCore world;assert(world.validate());assert(world.obstacleCount()==6);auto standBlock=world.resolve(-3,8,0,8,.34,1.78);assert(standBlock.hitX||standBlock.hitZ);auto crouchPass=world.resolve(-3,8,0,8,.34,1.18);assert(!crouchPass.hitX&&!crouchPass.hitZ);assert(std::isfinite(world.clearanceHeightAt(0,8,.2)));
+WorldCollisionCore world;assert(world.validate());assert(world.obstacleCount()>=WorldCollisionCore::kLegacyObstacleCount);assert(world.obstacleCount()<=WorldCollisionCore::kMaxObstacles);auto standBlock=world.resolve(-3,8,0,8,.34,1.78);assert(standBlock.hitX||standBlock.hitZ);auto crouchPass=world.resolve(-3,8,0,8,.34,1.18);assert(!crouchPass.hitX&&!crouchPass.hitZ);assert(std::isfinite(world.clearanceHeightAt(0,8,.2)));
 // low roof regression: crouch passes while standing is rejected.
 auto rayHit=world.raycastSegment({13,1,-2},{27,1,-2});assert(rayHit.hit&&rayHit.material==WorldMaterial::Wood);
 

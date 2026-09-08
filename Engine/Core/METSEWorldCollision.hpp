@@ -43,7 +43,11 @@ struct WorldCoverCandidate {
 
 class WorldCollisionCore final {
 public:
-    static constexpr std::size_t kMaxObstacles=8;
+    // Build 009-F battlefield remains intentionally compact. Twenty authoritative
+    // collision primitives are enough to create urban / industrial / rocky test
+    // lanes while keeping every hot-path loop strictly bounded on iPhone.
+    static constexpr std::size_t kLegacyObstacleCount=6;
+    static constexpr std::size_t kMaxObstacles=20;
     static constexpr std::size_t kMaxCoverCandidates=kMaxObstacles*4;
 
     WorldCollisionCore() noexcept;
