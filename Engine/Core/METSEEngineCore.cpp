@@ -15,7 +15,74 @@ void EngineCore::drainInputQueue()noexcept{InputCommand cmd{};std::size_t draine
 void EngineCore::applyDiscrete(const InputCommand&cmd)noexcept{switch(cmd.kind){case InputCommandKind::Fire:{const auto&w=weapon_.state();bool ready=!w.reloading&&!w.obstructed&&w.fireCooldown<=0.0&&w.ammoInMagazine>0&&ballistics_.activeCount()<BallisticsCore::kMaxProjectiles;executeAtomic(CommandKind::FireWeapon,ready,EventKind::ShotFired,[&](std::uint64_t id){ShotSolution shot{};if(!weapon_.fire(cameraPosition(),character_.cameraYaw(),character_.state().pitch,id,shot))return false;if(!ballistics_.spawn(shot))return false;++state_.shotsFired;return true;});break;}case InputCommandKind::Reload:{const auto&w=weapon_.state();bool can=!w.reloading&&w.ammoInMagazine<weapon_.config().magazineSize&&w.reserveAmmo>0;executeAtomic(CommandKind::ReloadWeapon,can,EventKind::ReloadStarted,[&](std::uint64_t){return weapon_.requestReload();});break;}case InputCommandKind::CycleStance:executeAtomic(CommandKind::CycleStance,true,EventKind::StanceChanged,[&](std::uint64_t){CharacterMotor before=character_;character_.cycleStance();double clearance=world_.clearanceHeightAt(character_.state().x,character_.state().z,character_.config().capsuleRadius);if(std::isfinite(clearance)&&character_.capsuleHeight()>clearance-0.02){character_=before;return false;}return true;});break;default:break;}}
 void EngineCore::advance(double realDt){frameCollisionContacts_=0;drainInputQueue();if(!std::isfinite(realDt)||realDt<=0){state_.interpolationAlpha=std::clamp(accumulatorSeconds_/config_.fixedStepSeconds,0.0,1.0);recordBlackBox(0,0,false);return;}double maxDelta=config_.fixedStepSeconds*config_.maxCatchUpSteps;bool inputClamped=realDt>maxDelta;accumulatorSeconds_+=std::min(realDt,maxDelta);std::uint32_t steps=0;while(accumulatorSeconds_>=config_.fixedStepSeconds&&steps<config_.maxCatchUpSteps){fixedStep();accumulatorSeconds_-=config_.fixedStepSeconds;++steps;}bool backlog=false;if(steps==config_.maxCatchUpSteps&&accumulatorSeconds_>=config_.fixedStepSeconds){accumulatorSeconds_=std::fmod(accumulatorSeconds_,config_.fixedStepSeconds);backlog=true;}bool clamped=inputClamped||backlog;state_.interpolationAlpha=std::clamp(accumulatorSeconds_/config_.fixedStepSeconds,0.0,1.0);recordBlackBox(realDt,steps,clamped);observeFrame(realDt,steps,clamped);}
 void EngineCore::updateWeaponObstruction()noexcept{Vec3 c=cameraPosition();double yaw=character_.cameraYaw(),pitch=character_.state().pitch;double cp=std::cos(pitch),sp=std::sin(pitch),sy=std::sin(yaw),cy=std::cos(yaw);Vec3 forward{sy*cp,sp,cy*cp};Vec3 to{c.x+forward.x*.62,c.y+forward.y*.62-.08,c.z+forward.z*.62};weapon_.setObstructed(world_.raycastSegment(c,to).hit);}
-void EngineCore::fixedStep()noexcept{EngineSnapshot stateCp=state_;CharacterMotor charCp=character_;WeaponCore weaponCp=weapon_;BallisticsCore ballCp=ballistics_;DamageCore damageCp=damage_;VisibilityCore visCp=visibility_;auto contactsCp=sessionCollisionContacts_;auto frameCp=frameCollisionContacts_;double px=character_.state().x,pz=character_.state().z;CharacterInput in{moveForward_,moveStrafe_,sprintHeld_};character_.fixedStep(config_.fixedStepSeconds,in);auto col=world_.resolve(px,pz,character_.state().x,character_.state().z,character_.config().capsuleRadius,character_.capsuleHeight());character_.applyHorizontalCollision(col.x,col.z,col.hitX,col.hitZ);frameCollisionContacts_+=col.contacts;sessionCollisionContacts_+=col.contacts;updateWeaponObstruction();bool wasReloading=weapon_.state().reloading;weapon_.fixedStep(config_.fixedStepSeconds,character_.horizontalSpeed(),moveStrafe_);if(wasReloading&&!weapon_.state().reloading)integrity_.appendSystemEvent(EventKind::ReloadCompleted,state_.simulationTick+1);ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_);if(damage_.resultSequence()!=lastDamageResultSequence_){lastDamageResultSequence_=damage_.resultSequence();const auto&r=damage_.lastResult();integrity_.appendCorrelatedSystemEvent(EventKind::DamageApplied,r.correlationId,state_.simulationTick+1);if(r.killed)integrity_.appendCorrelatedSystemEvent(EventKind::TargetKilled,r.correlationId,state_.simulationTick+1);}for(std::size_t i=0;i<damage_.targetCount();++i){const auto&t=damage_.targets()[i];visibility_.syncTarget(i,t.id,t.position,t.alive);}visibility_.update(cameraPosition(),character_.cameraYaw());state_.simulationSeconds+=config_.fixedStepSeconds;++state_.simulationTick;syncSnapshot();if(!validateInvariants()){state_=stateCp;character_=charCp;weapon_=weaponCp;ballistics_=ballCp;damage_=damageCp;visibility_=visCp;sessionCollisionContacts_=contactsCp;frameCollisionContacts_=frameCp;++simulationInvariantRollbacks_;integrity_.appendSystemEvent(EventKind::SimulationInvariantRolledBack,state_.simulationTick);}}
+void EngineCore::fixedStep()noexcept{
+EngineSnapshot stateCp=state_;
+CharacterMotor charCp=character_;
+WeaponCore weaponCp=weapon_;
+BallisticsCore ballCp=ballistics_;
+DamageCore damageCp=damage_;
+VisibilityCore visCp=visibility_;
+auto contactsCp=sessionCollisionContacts_;
+auto frameCp=frameCollisionContacts_;
+const auto damageSequenceCp=lastDamageResultSequence_;
+
+double px=character_.state().x,pz=character_.state().z;
+CharacterInput in{moveForward_,moveStrafe_,sprintHeld_};
+character_.fixedStep(config_.fixedStepSeconds,in);
+
+auto col=world_.resolve(px,pz,character_.state().x,character_.state().z,
+                        character_.config().capsuleRadius,character_.capsuleHeight());
+character_.applyHorizontalCollision(col.x,col.z,col.hitX,col.hitZ);
+frameCollisionContacts_+=col.contacts;
+sessionCollisionContacts_+=col.contacts;
+
+updateWeaponObstruction();
+const bool wasReloading=weapon_.state().reloading;
+weapon_.fixedStep(config_.fixedStepSeconds,character_.horizontalSpeed(),moveStrafe_);
+const bool reloadCompleted=wasReloading&&!weapon_.state().reloading;
+
+ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_);
+const auto pendingDamageSequence=damage_.resultSequence();
+const bool hasPendingDamage=pendingDamageSequence!=damageSequenceCp;
+DamageResult pendingDamage{};
+if(hasPendingDamage) pendingDamage=damage_.lastResult();
+
+for(std::size_t i=0;i<damage_.targetCount();++i){
+    const auto&t=damage_.targets()[i];
+    visibility_.syncTarget(i,t.id,t.position,t.alive);
+}
+visibility_.update(cameraPosition(),character_.cameraYaw());
+
+state_.simulationSeconds+=config_.fixedStepSeconds;
+++state_.simulationTick;
+syncSnapshot();
+
+if(!validateInvariants()){
+    state_=stateCp;
+    character_=charCp;
+    weapon_=weaponCp;
+    ballistics_=ballCp;
+    damage_=damageCp;
+    visibility_=visCp;
+    sessionCollisionContacts_=contactsCp;
+    frameCollisionContacts_=frameCp;
+    lastDamageResultSequence_=damageSequenceCp;
+    ++simulationInvariantRollbacks_;
+    integrity_.appendSystemEvent(EventKind::SimulationInvariantRolledBack,state_.simulationTick);
+    return;
+}
+
+// Domain events are published only after the complete simulation slice has passed
+// invariant validation. This keeps state + event journal All-or-Nothing.
+if(reloadCompleted)
+    integrity_.appendSystemEvent(EventKind::ReloadCompleted,state_.simulationTick);
+if(hasPendingDamage){
+    lastDamageResultSequence_=pendingDamageSequence;
+    integrity_.appendCorrelatedSystemEvent(EventKind::DamageApplied,pendingDamage.correlationId,state_.simulationTick);
+    if(pendingDamage.killed)
+        integrity_.appendCorrelatedSystemEvent(EventKind::TargetKilled,pendingDamage.correlationId,state_.simulationTick);
+}
+}
 void EngineCore::syncSnapshot()noexcept{const auto&c=character_.state();const auto&w=weapon_.state();state_.playerX=c.x;state_.playerY=c.y;state_.playerZ=c.z;state_.velocityX=c.velocityX;state_.velocityY=c.velocityY;state_.velocityZ=c.velocityZ;state_.playerBodyYaw=c.bodyYaw;state_.playerYaw=character_.cameraYaw();state_.playerPitch=c.pitch;state_.cameraHeight=character_.cameraHeight();state_.cameraRoll=c.cameraRoll;state_.cameraLean=c.cameraLean;state_.horizontalSpeed=character_.horizontalSpeed();state_.stance=c.stance;state_.gait=c.gait;state_.grounded=c.grounded;state_.sprinting=c.sprinting;state_.collisionContacts=sessionCollisionContacts_;state_.ammoInMagazine=w.ammoInMagazine;state_.reserveAmmo=w.reserveAmmo;state_.adsAlpha=w.adsAlpha;state_.reloadRemaining=w.reloadRemaining;state_.reloading=w.reloading;state_.weaponObstructed=w.obstructed;state_.recoilPitch=w.recoilPitch;state_.recoilYaw=w.recoilYaw;state_.weaponSwayX=w.swayX;state_.weaponSwayY=w.swayY;state_.activeProjectiles=static_cast<std::uint32_t>(ballistics_.activeCount());state_.damageHits=damage_.totalHits();state_.damageKills=damage_.totalKills();state_.visibility=visibility_.report();state_.primaryTargetHealth=damage_.targetCount()?damage_.targets()[0].health:0;}
 bool EngineCore::validateInvariants()const noexcept{if(!std::isfinite(config_.fixedStepSeconds)||config_.fixedStepSeconds<=0||config_.maxCatchUpSteps<1||config_.maxCatchUpSteps>8||config_.maxCombatants<1||config_.maxCombatants>32||state_.activeCombatants>config_.maxCombatants||!std::isfinite(state_.simulationSeconds)||state_.simulationSeconds<0||!std::isfinite(state_.interpolationAlpha)||state_.interpolationAlpha<0||state_.interpolationAlpha>1||!std::isfinite(moveForward_)||!std::isfinite(moveStrafe_)||std::hypot(moveForward_,moveStrafe_)>1.000001)return false;if(!character_.validate()||!weapon_.validate()||!world_.validate()||!ballistics_.validate()||!damage_.validate()||!visibility_.validate()||!inputQueue_.validate())return false;double clearance=world_.clearanceHeightAt(character_.state().x,character_.state().z,character_.config().capsuleRadius);if(std::isfinite(clearance)&&character_.capsuleHeight()>clearance-0.005)return false;const auto&c=character_.state();const auto&w=weapon_.state();if(!eq(state_.playerX,c.x)||!eq(state_.playerY,c.y)||!eq(state_.playerZ,c.z)||!eq(state_.playerYaw,character_.cameraYaw())||!eq(state_.cameraHeight,character_.cameraHeight())||state_.stance!=c.stance||state_.gait!=c.gait||state_.grounded!=c.grounded||state_.ammoInMagazine!=w.ammoInMagazine||state_.reserveAmmo!=w.reserveAmmo||!eq(state_.adsAlpha,w.adsAlpha)||state_.activeProjectiles!=ballistics_.activeCount()||state_.damageHits!=damage_.totalHits()||state_.damageKills!=damage_.totalKills())return false;return true;}
 void EngineCore::recordBlackBox(double dt,std::uint32_t steps,bool clamped)noexcept{BlackBoxFrame f{};f.simulationTick=state_.simulationTick;f.realDeltaSeconds=dt;f.playerX=state_.playerX;f.playerY=state_.playerY;f.playerZ=state_.playerZ;f.horizontalSpeed=state_.horizontalSpeed;f.adsAlpha=state_.adsAlpha;f.queueDepth=static_cast<std::uint32_t>(inputQueue_.size());f.activeProjectiles=state_.activeProjectiles;f.catchUpSteps=steps;f.shotsFired=state_.shotsFired;f.damageHits=state_.damageHits;f.stance=state_.stance;f.gait=state_.gait;f.grounded=state_.grounded;f.sprinting=state_.sprinting;f.reloading=state_.reloading;f.catchUpClamped=clamped;blackBox_[blackBoxWrite_]=f;blackBoxWrite_=(blackBoxWrite_+1)%kBlackBoxCapacity;blackBoxCount_=std::min(blackBoxCount_+1,kBlackBoxCapacity);}
