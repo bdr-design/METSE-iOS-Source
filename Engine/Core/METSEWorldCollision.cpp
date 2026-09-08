@@ -207,6 +207,7 @@ void WorldCollisionCore::rebuildCoverCandidates() noexcept {
 
     for(std::size_t i=0;i<obstacleCount_;++i){
         const auto& obstacle=obstacles_[i];
+        // Overhead-only geometry cannot protect a standing chest and must never become cover.
         if(obstacle.minY>0.05||obstacle.maxY<1.15) continue;
         const double centerX=(obstacle.minX+obstacle.maxX)*0.5;
         const double centerZ=(obstacle.minZ+obstacle.maxZ)*0.5;
