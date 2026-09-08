@@ -34,6 +34,7 @@ struct WeaponState {
 struct ShotSolution {
     Vec3 origin{};
     Vec3 direction{0.0,0.0,1.0};
+    Vec3 aimPoint{};
     double muzzleVelocity = 0.0;
     double massKg = 0.0;
     std::uint64_t correlationId = 0;
@@ -46,6 +47,12 @@ public:
     void setAimHeld(bool held) noexcept { state_.aimingHeld = held; }
     bool requestReload() noexcept;
     void fixedStep(double dt, double horizontalSpeed, double strafeInput) noexcept;
+    // Aim Truth contract: the center camera ray is authoritative. Muzzle parallax
+    // converges onto that same ray at sightConvergenceMeters. Visual recoil/sway
+    // never silently changes projectile direction.
+    [[nodiscard]] Vec3 viewDirection(double yaw,double pitch) const noexcept;
+    [[nodiscard]] Vec3 muzzlePosition(const Vec3& cameraPosition,double yaw,double pitch) const noexcept;
+    [[nodiscard]] bool previewShot(const Vec3& cameraPosition,double yaw,double pitch,std::uint64_t correlationId,ShotSolution& out) const noexcept;
     bool fire(const Vec3& cameraPosition,
               double yaw,
               double pitch,
