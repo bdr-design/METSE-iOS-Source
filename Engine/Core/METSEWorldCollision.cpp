@@ -12,9 +12,9 @@ obstacles_[3]={14,0,-3,26,1.7,-1,WorldMaterial::Wood};
 obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
 // Low overhead: crouch/prone can pass, standing cannot.
 obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
-// Build 009 material lanes. They are kept away from the two Aim Truth training targets.
-obstacles_[6]={28,0,-22,33,2.5,-17,WorldMaterial::Brick};
-obstacles_[7]={-32,0,14,-31.9,2.2,20,WorldMaterial::Glass};
+// Build 009 material lanes: deliberately thin test walls kept away from Aim Truth targets.
+obstacles_[6]={28.0,0,-22,28.12,2.5,-17,WorldMaterial::Brick};
+obstacles_[7]={-32.0,0,14,-31.96,2.2,20,WorldMaterial::Glass};
 obstacleCount_=8;
 }
 bool WorldCollisionCore::overlaps(double v,double mn,double mx)noexcept{return v>mn&&v<mx;}
