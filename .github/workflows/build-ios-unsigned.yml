@@ -43,33 +43,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Temporary exact integrity diagnostic
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib
-          root=Path.cwd()
-          expected={}
-          hits=0
-          for line in (root/'SOURCE_INTEGRITY_SHA256.txt').read_text(encoding='utf-8').splitlines():
-              if not line.strip():
-                  continue
-              digest, rel=line.split('  ',1)
-              expected[rel]=digest.lower()
-              if rel=='Scripts/verify_integrity.py':
-                  hits+=1
-          target='Scripts/verify_integrity.py'
-          wanted=expected[target]
-          got=hashlib.sha256((root/target).read_bytes()).hexdigest()
-          print('exact_manifest_entries=',hits)
-          print('wanted_repr=',repr(wanted),'len=',len(wanted),'type=',type(wanted).__name__)
-          print('got_repr=',repr(got),'len=',len(got),'type=',type(got).__name__)
-          print('wanted_eq_got=',wanted==got)
-          print('wanted_codepoints=',[ord(ch) for ch in wanted])
-          print('got_codepoints=',[ord(ch) for ch in got])
-          print('verifier_bytes=',len((root/target).read_bytes()))
-          PY
       - name: Source integrity
         run: python3 Scripts/verify_integrity.py
       - name: Architecture guardrails
