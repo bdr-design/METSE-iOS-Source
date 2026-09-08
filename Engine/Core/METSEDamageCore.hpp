@@ -77,6 +77,10 @@ public:
     DamageCore() noexcept;
     void reset() noexcept;
     void fixedStep(double dt) noexcept;
+    // Tactical locomotion is owned by TacticalAICore. EngineCore mirrors the accepted
+    // AI position here before BallisticsCore traces targets so DamageCore never becomes
+    // a second movement owner.
+    bool syncTargetPosition(std::size_t index,std::uint32_t id,Vec3 position) noexcept;
     [[nodiscard]] DamageIntersection traceSegment(const Vec3& from,const Vec3& to) const noexcept;
     DamageResult applyIntersection(const DamageIntersection& hit,
                                    double projectileEnergyJ,
