@@ -178,6 +178,7 @@ private:
         double accumulator = 0.0;
         double moveForward = 0.0;
         double moveStrafe = 0.0;
+        std::uint64_t consumedDamageResultSequence = 0;
         bool sprintHeld = false;
     };
 
@@ -202,7 +203,7 @@ private:
         }
 
         const std::uint64_t commandId=integrity_.admit(kind,state_.simulationTick);
-        MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,tacticalAI_,accumulatorSeconds_,moveForward_,moveStrafe_,sprintHeld_};
+        MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,tacticalAI_,accumulatorSeconds_,moveForward_,moveStrafe_,consumedDamageResultSequence_,sprintHeld_};
         const bool applied=apply(commandId);
         syncSnapshot();
         if(!applied || !validateInvariants()){
@@ -216,6 +217,7 @@ private:
             accumulatorSeconds_=cp.accumulator;
             moveForward_=cp.moveForward;
             moveStrafe_=cp.moveStrafe;
+            consumedDamageResultSequence_=cp.consumedDamageResultSequence;
             sprintHeld_=cp.sprintHeld;
             integrity_.rollback(commandId,state_.simulationTick);
             return false;
