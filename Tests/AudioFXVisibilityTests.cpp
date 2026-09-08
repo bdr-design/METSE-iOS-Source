@@ -1,4 +1,5 @@
 #include "../Engine/Core/METSEAudioFXCore.hpp"
+#include "../Engine/Core/METSEEngineCore.hpp"
 #include "../Engine/Core/METSEVisibilityCore.hpp"
 #include "../Engine/Core/METSEWorldCollision.hpp"
 #include <cassert>
@@ -104,6 +105,40 @@ int main(){
     const auto legacyReport=legacyVisibility.report();
     assert(legacyReport.full==1&&legacyReport.minimal==1);
     assert(legacyVisibility.validate());
+
+    // Engine integration: accepted simulation movement owns footsteps and the same
+    // Fire transaction owns the acoustic/muzzle intent. Reset clears both pools.
+    EngineCore engine;
+    assert(engine.snapshot().audioFX.cuesEmitted==0);
+    engine.setMovementInput(1.0,0.0);
+    for(int i=0;i<24;++i) engine.advance(1.0/60.0);
+    assert(engine.snapshot().audioFX.footsteps>=1);
+    assert(engine.diagnostics().audioFXValid);
+    engine.setMovementInput(0.0,0.0);
+    for(int i=0;i<8;++i) engine.advance(1.0/60.0);
+    const auto beforeShotCues=engine.snapshot().audioFX.cuesEmitted;
+    assert(engine.triggerFire());
+    engine.advance(1.0/60.0);
+    assert(engine.snapshot().audioFX.outdoorShots==1);
+    assert(engine.snapshot().audioFX.cuesEmitted==beforeShotCues+1);
+    const auto fingerprintBeforeRollback=engine.audioFX().deterministicFingerprint();
+    assert(!engine.testOnlyExecuteInvariantViolation());
+    assert(engine.audioFX().deterministicFingerprint()==fingerprintBeforeRollback);
+    assert(engine.diagnostics().audioFXValid);
+    engine.reset();
+    assert(engine.snapshot().audioFX.cuesEmitted==0);
+    assert(engine.snapshot().audioFX.activeFX==0);
+
+    EngineCore engineA,engineB;
+    for(int i=0;i<90;++i){
+        engineA.setMovementInput(0.7,0.15);
+        engineB.setMovementInput(0.7,0.15);
+        if(i==36){ assert(engineA.triggerFire()); assert(engineB.triggerFire()); }
+        engineA.advance(1.0/60.0);
+        engineB.advance(1.0/60.0);
+    }
+    assert(engineA.audioFX().deterministicFingerprint()==engineB.audioFX().deterministicFingerprint());
+    assert(engineA.deterministicStateHash()==engineB.deterministicStateHash());
 
     std::cout<<"METSE Build 009-G Audio FX + Visibility Tests: PASS\n";
 }
