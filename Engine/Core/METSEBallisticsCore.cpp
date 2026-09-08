@@ -1,6 +1,7 @@
 #include "METSEBallisticsCore.hpp"
 #include "METSEWorldCollision.hpp"
 #include "METSEDamageCore.hpp"
+#include "METSEMaterialCore.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -31,10 +32,23 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
             const auto result=damage.applyIntersection(targetHit,energy,p.correlationId);
             if(result.hit){p.position={from.x+(to.x-from.x)*targetHit.t,from.y+(to.y-from.y)*targetHit.t,from.z+(to.z-from.z)*targetHit.t};p.active=false;++metrics_.impacts;++metrics_.targetImpacts;continue;}
         }
-        if(worldHit.hit){++metrics_.impacts;++metrics_.worldImpacts;
-            if(worldHit.material==WorldMaterial::Wood && energy>420.0 && p.penetrations<1){++p.penetrations;++metrics_.penetrations;p.velocity.x*=0.58;p.velocity.y*=0.58;p.velocity.z*=0.58;p.position={worldHit.point.x+p.velocity.x*0.0008,worldHit.point.y+p.velocity.y*0.0008,worldHit.point.z+p.velocity.z*0.0008};continue;}
+        if(worldHit.hit){
+            ++metrics_.impacts;
+            ++metrics_.worldImpacts;
+            const auto profile=MaterialCore::ballistic(worldHit.material);
+            if(profile.penetrable && energy>profile.penetrationThresholdJoules && p.penetrations<1){
+                ++p.penetrations;
+                ++metrics_.penetrations;
+                p.velocity.x*=profile.retainedVelocityFraction;
+                p.velocity.y*=profile.retainedVelocityFraction;
+                p.velocity.z*=profile.retainedVelocityFraction;
+                p.position={worldHit.point.x+p.velocity.x*0.0008,worldHit.point.y+p.velocity.y*0.0008,worldHit.point.z+p.velocity.z*0.0008};
+                continue;
+            }
             ++metrics_.terminalWorldImpacts;
-            p.position=worldHit.point;p.active=false;continue;
+            p.position=worldHit.point;
+            p.active=false;
+            continue;
         }
         p.position=to;p.ageSeconds+=dt;
     }
@@ -42,6 +56,7 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
 std::size_t BallisticsCore::activeCount() const noexcept {std::size_t n=0;for(const auto& p:projectiles_)if(p.active)++n;return n;}
 bool BallisticsCore::validate() const noexcept {
     if(metrics_.terminalWorldImpacts>metrics_.worldImpacts||metrics_.penetrations>metrics_.worldImpacts)return false;
+    if(!MaterialCore::validateProfile(MaterialCore::ballistic(WorldMaterial::Concrete))||!MaterialCore::validateProfile(MaterialCore::ballistic(WorldMaterial::Steel))||!MaterialCore::validateProfile(MaterialCore::ballistic(WorldMaterial::Wood)))return false;
     for(const auto& p:projectiles_)if(p.active){if(!std::isfinite(p.position.x)||!std::isfinite(p.position.y)||!std::isfinite(p.position.z)||!std::isfinite(p.velocity.x)||!std::isfinite(p.velocity.y)||!std::isfinite(p.velocity.z)||!std::isfinite(p.massKg)||p.massKg<=0.0||!std::isfinite(p.ageSeconds)||p.ageSeconds<0.0||p.correlationId==0)return false;}return activeCount()<=kMaxProjectiles;
 }
 } // namespace metse
