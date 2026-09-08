@@ -124,7 +124,14 @@ req('kMaxAgents = 32' in ai or 'kMaxAgents=32' in ai,'Tactical AI agent cap must
 req('raycastSegment' in ai and 'lastKnownPlayerPosition' in ai and 'memorySeconds' in ai,'Tactical AI LOS/memory contract missing')
 req('AIPerceptionSource' in ai and 'hearingEstimate' in ai and 'hearingMaxLocalizationErrorMeters' in ai,'Tactical AI perception provenance/localization uncertainty missing')
 req('AISquadOrder' in ai and 'AIAlertState' in ai,'Tactical AI state/squad contract missing')
-req('TacticalAICore tacticalAI_' in engine and 'syncTacticalAI()' in engine and 'tacticalAI_.fixedStep' in engine,'Tactical AI must be simulation-owned')
+req('TacticalAICore tacticalAI_' in engine and
+    'initializeTacticalAI()' in engine and
+    'stepTacticalAI()' in engine and
+    'syncTacticalAICombatState()' in engine and
+    'mirrorTacticalPositionsToDamage()' in engine and
+    'tacticalAI_.fixedStep' in engine and
+    'stepTacticalAI();\n    ballistics_.fixedStep' in engine,
+    'Tactical AI must be simulation-owned and stepped before ballistic target tracing')
 
 req('NSProcessInfoThermalStateSerious' in bridge and 'preferredFramesPerSecond = target' in bridge,'Thermal presentation fallback missing')
 req('_core.advance' in bridge and '_core.setMovementInput' in bridge,'Bridge simulation/input integration missing')
