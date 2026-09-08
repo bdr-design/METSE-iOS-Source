@@ -7,6 +7,7 @@ OUT="${TMPDIR:-/tmp}/metse-build009-tests"
   Engine/Core/METSECharacterMotor.cpp \
   Engine/Core/METSEWeaponCore.cpp \
   Engine/Core/METSEWorldCollision.cpp \
+  Engine/Core/METSEMaterialCore.cpp \
   Engine/Core/METSEDamageCore.cpp \
   Engine/Core/METSEBallisticsCore.cpp \
   Engine/Core/METSEVisibilityCore.cpp \
