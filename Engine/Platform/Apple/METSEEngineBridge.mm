@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <os/lock.h>
 #import <simd/simd.h>
+#import <UIKit/UIKit.h>
 #include "../../Core/METSEEngineCore.hpp"
 #include <algorithm>
 
@@ -43,6 +44,15 @@ static_assert(sizeof(METSEFrameUniforms) % 16 == 0, "Metal uniform ABI must rema
     uint64_t _drawableMisses;
     double _renderCpuTotalMilliseconds;
     double _renderCpuMaxMilliseconds;
+    uint64_t _coreLockSamples;
+    double _coreLockWaitTotalMilliseconds;
+    double _coreLockWaitMaxMilliseconds;
+    double _coreCriticalTotalMilliseconds;
+    double _coreCriticalMaxMilliseconds;
+    double _callbackGapMaxMilliseconds;
+    uint64_t _callbackGapsOver250ms;
+    uint64_t _lifecycleTimingResets;
+    BOOL _suppressNextFrameGap;
     NSInteger _presentationFPS;
 }
 
@@ -55,6 +65,12 @@ static_assert(sizeof(METSEFrameUniforms) % 16 == 0, "Metal uniform ABI must rema
     _coreLock = OS_UNFAIR_LOCK_INIT;
     _telemetryLock = OS_UNFAIR_LOCK_INIT;
     _presentationFPS = 60;
+    _suppressNextFrameGap = NO;
+    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationWillResignActiveNotification object:nil];
+    [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationWillEnterForegroundNotification object:nil];
+    [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationDidBecomeActiveNotification object:nil];
 
     id<MTLDevice> device = view.device ?: MTLCreateSystemDefaultDevice();
     if (!device) return nil;
@@ -84,7 +100,24 @@ static_assert(sizeof(METSEFrameUniforms) % 16 == 0, "Metal uniform ABI must rema
     return self;
 }
 
-- (void)start { _running = YES; _lastFrameTime = CACurrentMediaTime(); self.metalView.paused = NO; }
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)handleTimingBoundary:(NSNotification *)note {
+    (void)note;
+    const CFTimeInterval now = CACurrentMediaTime();
+    os_unfair_lock_lock(&_telemetryLock);
+    _lastFrameTime = now;
+    _suppressNextFrameGap = YES;
+    ++_lifecycleTimingResets;
+    os_unfair_lock_unlock(&_telemetryLock);
+}
+- (void)start {
+    _running = YES;
+    os_unfair_lock_lock(&_telemetryLock);
+    _lastFrameTime = CACurrentMediaTime();
+    _suppressNextFrameGap = YES;
+    os_unfair_lock_unlock(&_telemetryLock);
+    self.metalView.paused = NO;
+}
 - (void)stop {
     _running = NO;
     self.metalView.paused = YES;
@@ -99,7 +132,7 @@ static_assert(sizeof(METSEFrameUniforms) % 16 == 0, "Metal uniform ABI must rema
 - (void)setSprintHeld:(BOOL)held { os_unfair_lock_lock(&_coreLock); _core.setSprintHeld(held); os_unfair_lock_unlock(&_coreLock); }
 - (void)setAimHeld:(BOOL)held { os_unfair_lock_lock(&_coreLock); _core.setAimHeld(held); os_unfair_lock_unlock(&_coreLock); }
 - (void)cycleStance { os_unfair_lock_lock(&_coreLock); _core.cycleStance(); os_unfair_lock_unlock(&_coreLock); }
-- (void)triggerFire { os_unfair_lock_lock(&_coreLock); BOOL queued = _core.triggerFire(); os_unfair_lock_unlock(&_coreLock); if (queued) _muzzleFlash = 1.0f; }
+- (void)triggerFire { os_unfair_lock_lock(&_coreLock); _core.triggerFire(); os_unfair_lock_unlock(&_coreLock); }
 - (void)reloadWeapon { os_unfair_lock_lock(&_coreLock); _core.reloadWeapon(); os_unfair_lock_unlock(&_coreLock); }
 
 static NSString *METSEStanceName(metse::CharacterStance stance) {
@@ -123,10 +156,14 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
 }
 
 - (NSString *)statusString {
+    // Deep diagnostics sort a bounded telemetry ring and verify the journal. Copy the
+    // bounded native core quickly, then do that work away from the live render lock.
+    metse::EngineCore coreCopy;
     os_unfair_lock_lock(&_coreLock);
-    const auto state = _core.snapshot();
-    const auto diagnostics = _core.diagnostics();
+    coreCopy = _core;
     os_unfair_lock_unlock(&_coreLock);
+    const auto state = coreCopy.snapshot();
+    const auto diagnostics = coreCopy.diagnostics();
     return [NSString stringWithFormat:@"%@/%@ %.1fm/s • %u/%u • ADS %.0f%% • P %u • Q %llu • JRN %@ • BB %llu",
             METSEStanceName(state.stance), METSEGaitName(state.gait), state.horizontalSpeed,
             state.ammoInMagazine, state.reserveAmmo, state.adsAlpha * 100.0,
@@ -135,18 +172,26 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
 }
 
 - (NSDictionary<NSString *, id> *)observatorySnapshot {
+    metse::EngineCore coreCopy;
     os_unfair_lock_lock(&_coreLock);
-    const auto s = _core.snapshot();
-    const auto d = _core.diagnostics();
+    coreCopy = _core;
     os_unfair_lock_unlock(&_coreLock);
+    const auto s = coreCopy.snapshot();
+    const auto d = coreCopy.diagnostics();
     const auto o = d.observatory;
     const auto stateHash = metse::sha256Hex(d.stateHash);
     const auto journalHead = metse::sha256Hex(d.journalHead);
     os_unfair_lock_lock(&_telemetryLock);
     uint64_t rendered = _renderedFrames, misses = _drawableMisses;
     double cpuTotal = _renderCpuTotalMilliseconds, cpuMax = _renderCpuMaxMilliseconds;
+    uint64_t lockSamples = _coreLockSamples, callbackSpikes = _callbackGapsOver250ms, lifecycleResets = _lifecycleTimingResets;
+    double lockWaitTotal = _coreLockWaitTotalMilliseconds, lockWaitMax = _coreLockWaitMaxMilliseconds;
+    double coreCriticalTotal = _coreCriticalTotalMilliseconds, coreCriticalMax = _coreCriticalMaxMilliseconds;
+    double callbackGapMax = _callbackGapMaxMilliseconds;
     os_unfair_lock_unlock(&_telemetryLock);
     double cpuAvg = rendered ? cpuTotal / (double)rendered : 0.0;
+    double lockWaitAvg = lockSamples ? lockWaitTotal / (double)lockSamples : 0.0;
+    double coreCriticalAvg = lockSamples ? coreCriticalTotal / (double)lockSamples : 0.0;
     return @{
         @"version":@"0.3.0", @"build":@8, @"presentationFPS":@(_presentationFPS),
         @"simulationTick":@(s.simulationTick), @"simulationSeconds":@(s.simulationSeconds),
@@ -157,29 +202,34 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
         @"averageFrameMs":@(o.averageFrameMilliseconds), @"p95FrameMs":@(o.p95FrameMilliseconds), @"p99FrameMs":@(o.p99FrameMilliseconds), @"maxFrameMs":@(o.maxFrameMilliseconds), @"estimatedFPS":@(o.estimatedFPS), @"onePercentLowFPS":@(o.onePercentLowFPS), @"pointOnePercentLowFPS":@(o.pointOnePercentLowFPS),
         @"framesOver20ms":@(o.framesOver20ms), @"framesOver33ms":@(o.framesOver33ms), @"catchUpClampedFrames":@(o.catchUpClampedFrames),
         @"queueDepth":@(d.inputQueueDepth), @"queueHighWatermark":@(d.inputQueue.highWatermark), @"queueCoalesced":@(d.inputQueue.coalesced), @"queueEvicted":@(d.inputQueue.evictedCoalescible), @"queueRejectedCritical":@(d.inputQueue.rejectedCritical), @"queueRejectedInvalid":@(d.inputQueue.rejectedInvalid),
-        @"projectilesSpawned":@(d.ballistics.spawned), @"worldImpacts":@(d.ballistics.worldImpacts), @"targetImpacts":@(d.ballistics.targetImpacts), @"penetrations":@(d.ballistics.penetrations),
+        @"projectilesSpawned":@(d.ballistics.spawned), @"worldImpacts":@(d.ballistics.worldImpacts), @"terminalWorldImpacts":@(d.ballistics.terminalWorldImpacts), @"targetImpacts":@(d.ballistics.targetImpacts), @"penetrations":@(d.ballistics.penetrations),
         @"visibilityFull":@(d.visibility.full), @"visibilityReduced":@(d.visibility.reduced), @"visibilityMinimal":@(d.visibility.minimal), @"visibilityDormant":@(d.visibility.dormant),
         @"collisionContacts":@(d.sessionCollisionContacts), @"worldObstacleCount":@(d.worldObstacleCount),
         @"journalValid":@(d.journalValid), @"worldValid":@(d.worldValid), @"observatoryValid":@(d.observatoryValid), @"queueValid":@(d.inputQueueValid), @"weaponValid":@(d.weaponValid), @"ballisticsValid":@(d.ballisticsValid), @"damageValid":@(d.damageValid), @"visibilityValid":@(d.visibilityValid),
         @"commandsCommitted":@(d.integrity.commandsCommitted), @"commandsRejected":@(d.integrity.commandsRejected), @"commandsRolledBack":@(d.integrity.commandsRolledBack), @"simulationInvariantRollbacks":@(d.simulationInvariantRollbacks), @"blackBoxFrames":@(d.retainedBlackBoxFrames),
+        @"denyFireCooldown":@(d.gameplayDenials.fireCooldown), @"denyFireReloading":@(d.gameplayDenials.fireReloading), @"denyFireObstructed":@(d.gameplayDenials.fireObstructed), @"denyFireEmpty":@(d.gameplayDenials.fireEmpty), @"denyProjectileCapacity":@(d.gameplayDenials.projectileCapacity), @"denyReloadInvalid":@(d.gameplayDenials.reloadInvalid), @"autoReloadStarted":@(d.gameplayDenials.autoReloadStarted),
         @"stateHash":[NSString stringWithUTF8String:stateHash.c_str()], @"journalHead":[NSString stringWithUTF8String:journalHead.c_str()],
-        @"renderedFrames":@(rendered), @"drawableMisses":@(misses), @"renderCpuAverageMs":@(cpuAvg), @"renderCpuMaxMs":@(cpuMax)
+        @"renderedFrames":@(rendered), @"drawableMisses":@(misses), @"renderCpuAverageMs":@(cpuAvg), @"renderCpuMaxMs":@(cpuMax),
+        @"coreLockWaitAverageMs":@(lockWaitAvg), @"coreLockWaitMaxMs":@(lockWaitMax), @"coreCriticalAverageMs":@(coreCriticalAvg), @"coreCriticalMaxMs":@(coreCriticalMax),
+        @"callbackGapMaxMs":@(callbackGapMax), @"callbackGapsOver250ms":@(callbackSpikes), @"lifecycleTimingResets":@(lifecycleResets)
     };
 }
 
 - (NSString *)observatoryReportText {
     NSDictionary *s = [self observatorySnapshot];
     return [NSString stringWithFormat:
-        @"METSE OBSERVATORY V2\nVersion %@ Build %@\nPresentation %@ FPS / Simulation 60 Hz\nTick %@ / %.2fs\nFrame %.1f FPS avg %.2fms p95 %.2f p99 %.2f max %.2f | 1%% low %.1f | 0.1%% low %.1f\nInput Q %@ peak %@ coalesced %@ evicted %@ rejectedCritical %@ rejectedInvalid %@\nWeapon %@/%@ ADS %.0f%% reload %@ obstructed %@\nCombat shots %@ projectiles %@ hits %@ kills %@ targetHP %.1f\nBallistics spawned %@ worldImpacts %@ targetImpacts %@ penetrations %@\nVisibility F/R/M/D %@/%@/%@/%@\nIntegrity JRN %@ committed %@ rejected %@ rollback %@ simRollback %@\nRenderer frames %@ misses %@ CPU avg %.3fms max %.3fms\nStateHash %@\nJournalHead %@\n",
+        @"METSE OBSERVATORY V3\nVersion %@ Build %@\nPresentation %@ FPS / Simulation 60 Hz\nTick %@ / %.2fs\nFrame %.1f FPS avg %.2fms p95 %.2f p99 %.2f max %.2f | 1%% low %.1f | 0.1%% low %.1f\nInput Q %@ peak %@ coalesced %@ evicted %@ rejectedCritical %@ rejectedInvalid %@\nWeapon %@/%@ ADS %.0f%% reload %@ obstructed %@\nCombat shots %@ projectiles %@ hits %@ kills %@ targetHP %.1f\nBallistics spawned %@ worldContacts %@ terminalWorld %@ targetImpacts %@ penetrations %@\nVisibility F/R/M/D %@/%@/%@/%@\nIntegrity JRN %@ committed %@ rejected %@ rollback %@ simRollback %@\nGameplayDenials cooldown %@ reloading %@ obstructed %@ empty %@ capacity %@ reloadInvalid %@ autoReload %@\nRenderer frames %@ misses %@ CPU avg %.3fms max %.3fms\nTiming lockWait avg %.3fms max %.3fms | coreCritical avg %.3fms max %.3fms | callbackGap max %.2fms >250ms %@ lifecycleResets %@\nStateHash %@\nJournalHead %@\n",
         s[@"version"],s[@"build"],s[@"presentationFPS"],s[@"simulationTick"],[s[@"simulationSeconds"] doubleValue],
         [s[@"estimatedFPS"] doubleValue],[s[@"averageFrameMs"] doubleValue],[s[@"p95FrameMs"] doubleValue],[s[@"p99FrameMs"] doubleValue],[s[@"maxFrameMs"] doubleValue],[s[@"onePercentLowFPS"] doubleValue],[s[@"pointOnePercentLowFPS"] doubleValue],
         s[@"queueDepth"],s[@"queueHighWatermark"],s[@"queueCoalesced"],s[@"queueEvicted"],s[@"queueRejectedCritical"],s[@"queueRejectedInvalid"],
         s[@"ammo"],s[@"reserveAmmo"],[s[@"adsAlpha"] doubleValue]*100.0,[s[@"reloading"] boolValue]?@"YES":@"NO",[s[@"weaponObstructed"] boolValue]?@"YES":@"NO",
         s[@"shotsFired"],s[@"activeProjectiles"],s[@"damageHits"],s[@"damageKills"],[s[@"primaryTargetHealth"] doubleValue],
-        s[@"projectilesSpawned"],s[@"worldImpacts"],s[@"targetImpacts"],s[@"penetrations"],
+        s[@"projectilesSpawned"],s[@"worldImpacts"],s[@"terminalWorldImpacts"],s[@"targetImpacts"],s[@"penetrations"],
         s[@"visibilityFull"],s[@"visibilityReduced"],s[@"visibilityMinimal"],s[@"visibilityDormant"],
         [s[@"journalValid"] boolValue]?@"OK":@"FAIL",s[@"commandsCommitted"],s[@"commandsRejected"],s[@"commandsRolledBack"],s[@"simulationInvariantRollbacks"],
-        s[@"renderedFrames"],s[@"drawableMisses"],[s[@"renderCpuAverageMs"] doubleValue],[s[@"renderCpuMaxMs"] doubleValue],s[@"stateHash"],s[@"journalHead"]];
+        s[@"denyFireCooldown"],s[@"denyFireReloading"],s[@"denyFireObstructed"],s[@"denyFireEmpty"],s[@"denyProjectileCapacity"],s[@"denyReloadInvalid"],s[@"autoReloadStarted"],
+        s[@"renderedFrames"],s[@"drawableMisses"],[s[@"renderCpuAverageMs"] doubleValue],[s[@"renderCpuMaxMs"] doubleValue],
+        [s[@"coreLockWaitAverageMs"] doubleValue],[s[@"coreLockWaitMaxMs"] doubleValue],[s[@"coreCriticalAverageMs"] doubleValue],[s[@"coreCriticalMaxMs"] doubleValue],[s[@"callbackGapMaxMs"] doubleValue],s[@"callbackGapsOver250ms"],s[@"lifecycleTimingResets"],s[@"stateHash"],s[@"journalHead"]];
 }
 
 - (void)mtkView:(MTKView *)view drawableSizeWillChange:(CGSize)size { (void)view; (void)size; }
@@ -188,14 +238,28 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
     if (!_running) return;
     CFTimeInterval frameStart = CACurrentMediaTime();
     [self updateThermalPresentationIfNeeded:frameStart];
+    double rawDelta = 0.0;
+    BOOL suppressGap = NO;
+    os_unfair_lock_lock(&_telemetryLock);
+    rawDelta = frameStart - _lastFrameTime;
+    _lastFrameTime = frameStart;
+    suppressGap = _suppressNextFrameGap;
+    _suppressNextFrameGap = NO;
+    const double rawGapMs = std::max(0.0, rawDelta * 1000.0);
+    _callbackGapMaxMilliseconds = std::max(_callbackGapMaxMilliseconds, rawGapMs);
+    if (!suppressGap && rawDelta > 0.250) ++_callbackGapsOver250ms;
+    os_unfair_lock_unlock(&_telemetryLock);
+    const double simulationDelta = suppressGap ? 0.0 : rawDelta;
     metse::EngineSnapshot state{};
     std::array<metse::WorldObstacle, metse::WorldCollisionCore::kMaxObstacles> obstacles{};
     std::array<metse::Projectile, metse::BallisticsCore::kMaxProjectiles> projectiles{};
     std::array<metse::DamageTarget, metse::DamageCore::kMaxTargets> targets{};
     std::size_t obstacleCount=0,targetCount=0;
     double minX=0,maxX=0,minZ=0,maxZ=0;
+    const CFTimeInterval lockRequested = CACurrentMediaTime();
     os_unfair_lock_lock(&_coreLock);
-    _core.advance(frameStart - _lastFrameTime);
+    const CFTimeInterval lockAcquired = CACurrentMediaTime();
+    _core.advance(simulationDelta);
     state = _core.snapshot();
     obstacles = _core.worldObstacles();
     obstacleCount = _core.worldObstacleCount();
@@ -203,8 +267,17 @@ static NSString *METSEGaitName(metse::CharacterGait gait) {
     projectiles = _core.projectiles();
     targets = _core.damageTargets();
     targetCount = _core.damageTargetCount();
+    const CFTimeInterval coreFinished = CACurrentMediaTime();
     os_unfair_lock_unlock(&_coreLock);
-    _lastFrameTime = frameStart;
+    const double lockWaitMs = (lockAcquired - lockRequested) * 1000.0;
+    const double coreCriticalMs = (coreFinished - lockAcquired) * 1000.0;
+    os_unfair_lock_lock(&_telemetryLock);
+    ++_coreLockSamples;
+    _coreLockWaitTotalMilliseconds += lockWaitMs;
+    _coreLockWaitMaxMilliseconds = std::max(_coreLockWaitMaxMilliseconds, lockWaitMs);
+    _coreCriticalTotalMilliseconds += coreCriticalMs;
+    _coreCriticalMaxMilliseconds = std::max(_coreCriticalMaxMilliseconds, coreCriticalMs);
+    os_unfair_lock_unlock(&_telemetryLock);
 
     MTLRenderPassDescriptor *pass = view.currentRenderPassDescriptor;
     id<CAMetalDrawable> drawable = view.currentDrawable;
