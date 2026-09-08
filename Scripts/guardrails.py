@@ -36,7 +36,7 @@ ball=text('Engine/Core/METSEBallisticsCore.hpp')+text('Engine/Core/METSEBallisti
 damage=text('Engine/Core/METSEDamageCore.hpp')+text('Engine/Core/METSEDamageCore.cpp')
 vis=text('Engine/Core/METSEVisibilityCore.hpp')+text('Engine/Core/METSEVisibilityCore.cpp')
 obs=text('Engine/Core/METSEObservatoryCore.hpp')+text('Engine/Core/METSEObservatoryCore.cpp')
-bridge=text('Engine/Platform/Apple/METSEEngineBridge.mm'); shader=text('Shaders/METSERenderer.metal'); tests=text('Tests/EngineCoreTests.cpp')
+bridge_h=text('Engine/Platform/Apple/METSEEngineBridge.h'); bridge=text('Engine/Platform/Apple/METSEEngineBridge.mm'); shader=text('Shaders/METSERenderer.metal'); tests=text('Tests/EngineCoreTests.cpp')
 req('kCapacity = 64' in queue or 'kCapacity=64' in queue,'Input queue capacity must be 64')
 req('coalesced' in queue and 'rejectedCritical' in queue and 'removeOldestCoalescible' in queue,'Queue coalescing/overflow policy missing')
 req('Do not coalesce across a discrete-command ordering barrier' in queue,'Ordering barrier rationale missing')
@@ -54,6 +54,8 @@ req('kMaxEntities=32' in vis or 'kMaxEntities = 32' in vis,'Visibility cap must 
 req('onePercentLowFPS' in obs and 'pointOnePercentLowFPS' in obs and 'p99FrameMilliseconds' in obs,'Observatory V2 percentiles missing')
 req('NSProcessInfoThermalStateSerious' in bridge and 'preferredFramesPerSecond = target' in bridge,'Thermal presentation fallback missing')
 req('_core.advance' in bridge and '_core.setMovementInput' in bridge,'Bridge simulation/input integration missing')
+req('(nullable instancetype)initWithView' in bridge_h,'Bridge initializer must remain nullable because Metal initialization can fail')
+req('out float' not in shader,'GLSL-style out parameters are forbidden in Metal Shading Language')
 req('kRenderProjectileCap' in bridge and 'targetData' in bridge,'Renderer telemetry bridge missing')
 req('ads' in shader and 'projectilePositions' in shader and 'targetData' in shader and 'weaponMask' in shader,'Weapon/ADS/projectile/target Metal rendering missing')
 req('METSE Build 008 Mega Combat Foundation Tests: PASS' in tests,'Build008 test banner missing')
@@ -66,7 +68,7 @@ for forbidden in ('UIKit','MetalKit','Foundation/Foundation.h','MTLDevice','MTKV
 bootstrap=json.loads((ROOT/'Content/bootstrap.json').read_text()); req(bootstrap.get('engineTuning',{}).get('maxCombatants')==32,'32 combatant cap missing')
 for p in ROOT.rglob('*'):
     if p.is_file() and p.suffix.lower() in {'.p12','.mobileprovision','.cer','.ipa','.xcarchive'}: errors.append(f'Forbidden artifact committed: {p.relative_to(ROOT)}')
-wf=text('.github/workflows/build-ios-unsigned.yml'); req('runs-on: macos-15' in wf,'Hosted macOS build required'); req('C++ mega combat foundation tests' in wf,'Mega combat tests must be mandatory'); req('METSE-v0.3.0-build008-mega-combat-unsigned' in wf,'Build008 artifact name missing')
+wf=text('.github/workflows/build-ios-unsigned.yml'); req('runs-on: macos-15' in wf,'Hosted macOS build required'); req('C++ mega combat foundation tests' in wf,'Mega combat tests must be mandatory'); req('Metal compile fast gate' in wf,'Metal compiler gate must be mandatory'); req('Xcode platform compile gate' in wf,'Full platform type/compile gate must be mandatory'); req('METSE-v0.3.0-build008-mega-combat-unsigned' in wf,'Build008 artifact name missing')
 build=text('Scripts/build_unsigned_ipa.sh');
 for obj in ('METSEInputCommandQueue','METSEWeaponCore','METSEDamageCore','METSEBallisticsCore','METSEVisibilityCore','METSEObservatoryCore','METSEIntegrityCore'):
     req(obj in build,f'Build evidence missing for {obj}')

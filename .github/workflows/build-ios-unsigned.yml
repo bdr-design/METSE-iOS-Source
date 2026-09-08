@@ -24,7 +24,7 @@ concurrency:
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,15 +34,43 @@ jobs:
         run: python3 Scripts/guardrails.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
-      - name: Swift syntax
+      - name: Swift syntax fast gate
         shell: bash
         run: |
           set -euo pipefail
           while IFS= read -r file; do
             xcrun swiftc -frontend -parse "$file"
           done < <(find iOS -name '*.swift' -type f | sort)
+      - name: Metal compile fast gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-output/preflight
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos metal \
+            -c \
+            -target air64-apple-ios17.0 \
+            -isysroot "$SDK_PATH" \
+            -o .ci-output/preflight/METSERenderer.air \
+            Shaders/METSERenderer.metal
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Xcode platform compile gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          set -o pipefail
+          xcodebuild \
+            -project METSE.xcodeproj \
+            -scheme METSE \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath .ci-output/PreflightDerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee .ci-output/preflight-xcodebuild.log
       - name: Build native unsigned IPA
         run: bash Scripts/build_unsigned_ipa.sh
       - name: Upload verified IPA
@@ -54,4 +82,14 @@ jobs:
           path: |
             .ci-output/METSE_v0.3.0_build008_unsigned.ipa
             .ci-output/METSE_v0.3.0_build008_unsigned.ipa.sha256
+            .ci-output/xcodebuild.log
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: METSE-build008-failure-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            .ci-output/preflight-xcodebuild.log
             .ci-output/xcodebuild.log
