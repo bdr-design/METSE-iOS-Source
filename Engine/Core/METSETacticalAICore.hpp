@@ -165,7 +165,10 @@ private:
     TacticalAIConfig config_{};
     WeaponConfig weaponConfig_{};
     std::array<TacticalAgentState,kMaxAgents> agents_{};
-    std::array<WeaponCore,kMaxAgents> weapons_{};
+    // Default-initialize each WeaponCore directly. Braced aggregate initialization
+    // would copy-list-initialize omitted elements and reject WeaponCore's explicit
+    // canonical constructor under libc++/Clang.
+    std::array<WeaponCore,kMaxAgents> weapons_;
     std::size_t agentCount_ = 0;
     std::size_t decisionCursor_ = 0;
     std::uint64_t decisionsExecuted_ = 0;
