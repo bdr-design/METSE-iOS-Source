@@ -14,6 +14,7 @@ TacticalAICore::TacticalAICore(TacticalAIConfig config) noexcept : config_(confi
     if (!std::isfinite(config_.memorySeconds) || config_.memorySeconds <= 0.1) config_.memorySeconds = 8.0;
     if (!std::isfinite(config_.hearingBaseMeters) || config_.hearingBaseMeters < 0.0) config_.hearingBaseMeters = 6.0;
     if (!std::isfinite(config_.hearingMaxMeters) || config_.hearingMaxMeters < config_.hearingBaseMeters) config_.hearingMaxMeters = 34.0;
+    if (!std::isfinite(config_.hearingMaxLocalizationErrorMeters) || config_.hearingMaxLocalizationErrorMeters < 0.0) config_.hearingMaxLocalizationErrorMeters = 7.0;
     if (!std::isfinite(config_.agentEyeHeight) || config_.agentEyeHeight <= 0.2) config_.agentEyeHeight = 1.58;
     config_.suspiciousConfidence = std::clamp(config_.suspiciousConfidence,0.05,0.8);
     config_.engagedConfidence = std::clamp(config_.engagedConfidence,config_.suspiciousConfidence+0.05,1.0);
@@ -42,6 +43,7 @@ bool TacticalAICore::syncAgent(std::size_t index, std::uint32_t id, Vec3 positio
         agent.confidence = 0.0;
         agent.threat = 0.0;
         agent.alert = AIAlertState::Unaware;
+        agent.perceptionSource = AIPerceptionSource::None;
         agent.memoryAgeSeconds = 0.0;
     }
     agentCount_ = std::max(agentCount_, index + 1);
@@ -85,12 +87,15 @@ void TacticalAICore::fixedStep(double dt,
             const double visualConfidence = std::clamp(0.58 + 0.30*distanceFactor + 0.12*angleFactor,0.0,1.0);
             agent.confidence = std::max(agent.confidence,visualConfidence);
             agent.lastKnownPlayerPosition = playerPosition;
+            agent.perceptionSource = AIPerceptionSource::Vision;
             agent.memoryAgeSeconds = 0.0;
         } else if (agent.heardPlayer) {
             const double hearingFactor = hearingRadius > 1e-6 ? 1.0-clamp01(distanceXZ/hearingRadius) : 0.0;
             const double audioConfidence = std::clamp(0.18 + 0.42*noise + 0.20*hearingFactor,0.0,0.78);
             agent.confidence = std::max(agent.confidence,audioConfidence);
-            agent.lastKnownPlayerPosition = playerPosition;
+            // Hearing creates a deterministic search estimate, never exact omniscient knowledge.
+            agent.lastKnownPlayerPosition = hearingEstimate(agent.id,playerPosition,audioConfidence,config_.hearingMaxLocalizationErrorMeters);
+            agent.perceptionSource = AIPerceptionSource::Hearing;
             agent.memoryAgeSeconds = 0.0;
         } else if (agent.confidence > 0.0) {
             agent.memoryAgeSeconds += dt;
@@ -99,6 +104,7 @@ void TacticalAICore::fixedStep(double dt,
             if (agent.memoryAgeSeconds >= config_.memorySeconds) {
                 agent.confidence = 0.0;
                 agent.memoryAgeSeconds = config_.memorySeconds;
+                agent.perceptionSource = AIPerceptionSource::None;
             }
         }
 
@@ -136,13 +142,16 @@ bool TacticalAICore::validate() const noexcept {
     if (agentCount_>kMaxAgents || !std::isfinite(config_.maxVisionDistanceMeters) || config_.maxVisionDistanceMeters<=0.0 ||
         !std::isfinite(config_.horizontalFovRadians) || config_.horizontalFovRadians<=0.0 ||
         !std::isfinite(config_.memorySeconds) || config_.memorySeconds<=0.0 ||
-        !std::isfinite(config_.hearingBaseMeters) || !std::isfinite(config_.hearingMaxMeters) || config_.hearingBaseMeters<0.0 || config_.hearingMaxMeters<config_.hearingBaseMeters) return false;
+        !std::isfinite(config_.hearingBaseMeters) || !std::isfinite(config_.hearingMaxMeters) || config_.hearingBaseMeters<0.0 || config_.hearingMaxMeters<config_.hearingBaseMeters ||
+        !std::isfinite(config_.hearingMaxLocalizationErrorMeters) || config_.hearingMaxLocalizationErrorMeters<0.0) return false;
     for (std::size_t i=0;i<agentCount_;++i) {
         const auto& a=agents_[i];
         if (a.id==0) continue;
         if (!std::isfinite(a.position.x)||!std::isfinite(a.position.y)||!std::isfinite(a.position.z)||!std::isfinite(a.facingYaw)||
+            !std::isfinite(a.lastKnownPlayerPosition.x)||!std::isfinite(a.lastKnownPlayerPosition.y)||!std::isfinite(a.lastKnownPlayerPosition.z)||
             !std::isfinite(a.memoryAgeSeconds)||a.memoryAgeSeconds<0.0||!std::isfinite(a.confidence)||a.confidence<0.0||a.confidence>1.000001||
             !std::isfinite(a.threat)||a.threat<0.0||a.threat>1.000001) return false;
+        if (a.alert==AIAlertState::Engaged && (!a.hasLineOfSight || a.perceptionSource!=AIPerceptionSource::Vision)) return false;
     }
     return true;
 }
@@ -153,6 +162,13 @@ double TacticalAICore::wrapAngle(double radians) noexcept {
     while (radians>kPi) radians-=2.0*kPi;
     while (radians<-kPi) radians+=2.0*kPi;
     return radians;
+}
+Vec3 TacticalAICore::hearingEstimate(std::uint32_t agentId, Vec3 playerPosition, double confidence, double maxErrorMeters) noexcept {
+    if (maxErrorMeters<=0.0 || confidence>=0.999) return playerPosition;
+    // Stable per-agent phase avoids frame-to-frame jitter and remains deterministic.
+    const double phase = std::fmod(static_cast<double>(agentId)*2.399963229728653,2.0*kPi);
+    const double radius = maxErrorMeters*(1.0-clamp01(confidence));
+    return {playerPosition.x+std::cos(phase)*radius,playerPosition.y,playerPosition.z+std::sin(phase)*radius};
 }
 
 } // namespace metse
