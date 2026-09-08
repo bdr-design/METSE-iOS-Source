@@ -164,15 +164,22 @@ void TacticalAICore::perceiveAgent(TacticalAgentState& agent,
                                    double noise,
                                    double hearingRadius,
                                    double dt) noexcept {
-    const double dx=playerPosition.x-agent.position.x;
-    const double dz=playerPosition.z-agent.position.z;
+    // A peek is a bounded alternate sensor/firing origin derived from the selected
+    // cover edge. The current player position is still admitted only through this LOS
+    // test; last-known memory is never silently replaced when the peek remains blocked.
+    Vec3 perceptionOrigin=agent.position;
+    if(agent.action==AIActionState::Peek&&distanceXZ(agent.peekPosition,agent.coverPosition)>0.10)
+        perceptionOrigin=agent.peekPosition;
+
+    const double dx=playerPosition.x-perceptionOrigin.x;
+    const double dz=playerPosition.z-perceptionOrigin.z;
     const double distance=std::hypot(dx,dz);
     const double targetYaw=std::atan2(dx,dz);
     const double angularError=std::abs(wrapAngle(targetYaw-agent.facingYaw));
     const bool insideFov=angularError<=config_.horizontalFovRadians*0.5;
     const bool insideVisionDistance=distance<=config_.maxVisionDistanceMeters;
 
-    const Vec3 eye{agent.position.x,agent.position.y+config_.agentEyeHeight,agent.position.z};
+    const Vec3 eye{perceptionOrigin.x,perceptionOrigin.y+config_.agentEyeHeight,perceptionOrigin.z};
     const Vec3 playerChest{playerPosition.x,playerPosition.y+kPlayerChestHeight,playerPosition.z};
     const auto worldHit=world.raycastSegment(eye,playerChest);
     const bool clearLine=!worldHit.hit;
@@ -293,10 +300,14 @@ void TacticalAICore::decideAgent(std::size_t agentIndex,const WorldCollisionCore
                 setAction(agent,retreat?AIActionState::Retreat:AIActionState::MoveToCover,coverPosition);
                 return;
             }
-            if(finiteVec(peekPosition)){
+            if(distanceXZ(peekPosition,coverPosition)>0.10){
                 setAction(agent,AIActionState::Peek,peekPosition);
                 return;
             }
+        }else{
+            agent.coverPosition={};
+            agent.peekPosition={};
+            agent.coverCandidateIndex=kNoCoverCandidate;
         }
 
         if(retreat){
@@ -330,6 +341,20 @@ void TacticalAICore::decideAgent(std::size_t agentIndex,const WorldCollisionCore
         }
         setAction(agent,AIActionState::Suppress,agent.position);
         return;
+    }
+
+    // Once the agent reaches previously selected cover, a peek is selected from the
+    // cover edge using only the remembered/squad-estimated threat position. The peek
+    // itself must reacquire Vision on a later perception slice before firing is legal.
+    if(agent.coverCandidateIndex!=kNoCoverCandidate&&
+       agent.coverCandidateIndex<world.coverCandidateCount()&&
+       distanceXZ(agent.position,agent.coverPosition)<=config_.coverArrivalRadiusMeters*1.25){
+        Vec3 peek{};
+        if(computePeekPoint(agent,world,agent.coverCandidateIndex,threatPosition,peek)){
+            agent.peekPosition=peek;
+            setAction(agent,AIActionState::Peek,peek);
+            return;
+        }
     }
 
     if(threatDistance>0.75&&directPathClear(world,agent.position,threatPosition)){
@@ -393,7 +418,7 @@ bool TacticalAICore::selectCover(const TacticalAgentState& agent,
             found=true;
             bestScore=score;
             outPosition=candidate.position;
-            outPeekPosition=hasPeek?peek:candidate.position;
+            outPeekPosition=hasPeek?peek:Vec3{};
             outCandidateIndex=static_cast<std::uint8_t>(i);
         }
     }
@@ -410,7 +435,8 @@ bool TacticalAICore::computePeekPoint(const TacticalAgentState& agent,
     if(!candidate.valid) return false;
     const Vec3 tangent{-candidate.outwardNormal.z,0.0,candidate.outwardNormal.x};
     const double preferred=(agent.id&1u)?1.0:-1.0;
-    for(double sign:{preferred,-preferred}){
+    const std::array<double,2> signs{preferred,-preferred};
+    for(double sign:signs){
         const Vec3 peek{candidate.position.x+tangent.x*config_.peekOffsetMeters*sign+candidate.outwardNormal.x*0.06,
                         candidate.position.y,
                         candidate.position.z+tangent.z*config_.peekOffsetMeters*sign+candidate.outwardNormal.z*0.06};
@@ -444,6 +470,7 @@ bool TacticalAICore::authorizeFire(std::size_t agentIndex,const WorldCollisionCo
 
     const Vec3 firingPosition=agent.action==AIActionState::Peek?agent.peekPosition:agent.position;
     if(!finiteVec(firingPosition)) return false;
+    if(agent.action==AIActionState::Peek&&distanceXZ(agent.peekPosition,agent.coverPosition)<=0.10) return false;
     const Vec3 camera{firingPosition.x,firingPosition.y+config_.agentEyeHeight,firingPosition.z};
     const Vec3 target{agent.lastKnownPlayerPosition.x,agent.lastKnownPlayerPosition.y+kPlayerChestHeight,agent.lastKnownPlayerPosition.z};
     const double dx=target.x-camera.x,dy=target.y-camera.y,dz=target.z-camera.z;
@@ -546,6 +573,7 @@ bool TacticalAICore::validate() const noexcept {
         if(agent.perceptionSource==AIPerceptionSource::None&&(agent.confidence>1e-9||agent.squadSourceAgentId!=0)) return false;
         if(agent.perceptionSource==AIPerceptionSource::Squad&&agent.squadSourceAgentId==0) return false;
         if(agent.coverCandidateIndex!=kNoCoverCandidate&&agent.coverCandidateIndex>=WorldCollisionCore::kMaxCoverCandidates) return false;
+        if(agent.action==AIActionState::Peek&&distanceXZ(agent.peekPosition,agent.coverPosition)<=0.10) return false;
         if(agent.fireAuthorized&&(!agent.combatCapable||!agent.hasLineOfSight||agent.perceptionSource!=AIPerceptionSource::Vision||
                                   (agent.action!=AIActionState::Peek&&agent.action!=AIActionState::Suppress))) return false;
         if(!weapons_[i].validate()) return false;
