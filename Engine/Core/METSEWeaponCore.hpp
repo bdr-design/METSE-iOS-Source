@@ -5,22 +5,33 @@ namespace metse {
 
 struct Vec3 { double x=0.0,y=0.0,z=0.0; };
 
+enum class ReloadKind : std::uint8_t { None=0, Tactical=1, Empty=2 };
+
 struct WeaponConfig {
     std::uint32_t magazineSize = 30;
     std::uint32_t startingReserve = 90;
     double roundsPerMinute = 700.0;
-    double reloadSeconds = 2.35;
+    double reloadSeconds = 2.35;              // tactical reload baseline
+    double emptyReloadSeconds = 2.70;         // empty magazine adds bolt/charging manipulation
     double adsTransitionSeconds = 0.18;
+    double sprintToFireSeconds = 0.16;
     double muzzleVelocity = 820.0;
     double projectileMassKg = 0.0040;
     double sightConvergenceMeters = 100.0;
+    double recoilPitchImpulse = 0.028;
+    double recoilYawImpulse = 0.009;
+    double recoilPitchRecoveryPerSecond = 10.0;
+    double recoilYawRecoveryPerSecond = 11.5;
+    double movementSwayScale = 1.0;
 };
 
 struct WeaponState {
     std::uint32_t ammoInMagazine = 30;
     std::uint32_t reserveAmmo = 90;
+    std::uint64_t shotSequence = 0;
     double fireCooldown = 0.0;
     double reloadRemaining = 0.0;
+    double sprintRecoveryRemaining = 0.0;
     double adsAlpha = 0.0;
     double recoilPitch = 0.0;
     double recoilYaw = 0.0;
@@ -29,6 +40,8 @@ struct WeaponState {
     bool aimingHeld = false;
     bool reloading = false;
     bool obstructed = false;
+    bool sprinting = false;
+    ReloadKind reloadKind = ReloadKind::None;
 };
 
 struct ShotSolution {
@@ -46,7 +59,8 @@ public:
     void reset() noexcept;
     void setAimHeld(bool held) noexcept { state_.aimingHeld = held; }
     bool requestReload() noexcept;
-    void fixedStep(double dt, double horizontalSpeed, double strafeInput) noexcept;
+    void fixedStep(double dt, double horizontalSpeed, double strafeInput, bool sprinting = false) noexcept;
+    [[nodiscard]] bool canFireNow() const noexcept;
     // Aim Truth contract: the center camera ray is authoritative. Muzzle parallax
     // converges onto that same ray at sightConvergenceMeters. Visual recoil/sway
     // never silently changes projectile direction.
@@ -67,6 +81,7 @@ private:
     static Vec3 normalize(Vec3 v) noexcept;
     static Vec3 add(Vec3 a, Vec3 b) noexcept;
     static Vec3 mul(Vec3 a, double s) noexcept;
+    static double recoilPattern(std::uint64_t shotIndex) noexcept;
     WeaponConfig config_{};
     WeaponState state_{};
 };
