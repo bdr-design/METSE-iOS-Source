@@ -25,7 +25,7 @@ void putD(std::array<std::uint8_t,N>& buffer,std::size_t& cursor,double value) n
 } // namespace
 
 EngineCore::EngineCore(EngineConfig config)
-    : config_(config), character_(config.character), weapon_(config.weapon), tacticalAI_(config.tacticalAI) {
+    : config_(config), character_(config.character), weapon_(config.weapon), tacticalAI_(config.tacticalAI,config.weapon) {
     if(!std::isfinite(config_.fixedStepSeconds) || config_.fixedStepSeconds<=0.0) config_.fixedStepSeconds=1.0/60.0;
     config_.maxCatchUpSteps=std::clamp<std::uint32_t>(config_.maxCatchUpSteps,1,8);
     config_.maxCombatants=std::clamp<std::uint32_t>(config_.maxCombatants,1,32);
@@ -60,7 +60,7 @@ void EngineCore::resetState() noexcept {
         visibility_.syncTarget(i,target.id,target.position,target.alive);
     }
     visibility_.update(cameraPosition(),character_.cameraYaw());
-    syncTacticalAI();
+    initializeTacticalAI();
     syncSnapshot();
 }
 
@@ -178,18 +178,41 @@ void EngineCore::updateWeaponObstruction() noexcept {
     weapon_.setObstructed(world_.raycastSegment(camera,to).hit);
 }
 
-void EngineCore::syncTacticalAI() noexcept {
+void EngineCore::initializeTacticalAI() noexcept {
+    tacticalAI_.reset();
     for(std::size_t i=0;i<damage_.targetCount() && i<TacticalAICore::kMaxAgents;++i){
         const auto& target=damage_.targets()[i];
         const double fixedFacing=(i%2==0)?3.14159265358979323846:-2.35;
-        tacticalAI_.syncAgent(i,target.id,target.position,fixedFacing,DamageCore::combatCapable(target));
+        tacticalAI_.syncAgent(i,target.id,target.position,fixedFacing,target.alive,DamageCore::combatCapable(target),target.health/100.0);
     }
+}
+
+void EngineCore::syncTacticalAICombatState() noexcept {
+    const std::size_t count=std::min(damage_.targetCount(),tacticalAI_.agentCount());
+    for(std::size_t i=0;i<count;++i){
+        const auto& target=damage_.targets()[i];
+        tacticalAI_.syncAgentCombatState(i,target.id,target.alive,DamageCore::combatCapable(target),target.health/100.0);
+    }
+}
+
+void EngineCore::mirrorTacticalPositionsToDamage() noexcept {
+    const std::size_t count=std::min(damage_.targetCount(),tacticalAI_.agentCount());
+    for(std::size_t i=0;i<count;++i){
+        const auto& target=damage_.targets()[i];
+        const auto& agent=tacticalAI_.agents()[i];
+        if(agent.id==target.id) damage_.syncTargetPosition(i,target.id,agent.position);
+    }
+}
+
+void EngineCore::stepTacticalAI() noexcept {
+    syncTacticalAICombatState();
     const auto& characterState=character_.state();
     const double movementNoise=std::clamp(character_.horizontalSpeed()/6.0*0.52+(characterState.sprinting?0.26:0.0),0.0,0.78);
     tacticalAI_.fixedStep(config_.fixedStepSeconds,world_,
                           {characterState.x,characterState.y,characterState.z},
                           {characterState.velocityX,characterState.velocityY,characterState.velocityZ},
                           movementNoise);
+    mirrorTacticalPositionsToDamage();
 }
 
 void EngineCore::fixedStep() noexcept {
@@ -220,8 +243,15 @@ void EngineCore::fixedStep() noexcept {
     weapon_.fixedStep(config_.fixedStepSeconds,character_.horizontalSpeed(),moveStrafe_,character_.state().sprinting);
     const bool reloadCompleted=wasReloading && !weapon_.state().reloading;
 
+    // Tactical locomotion is advanced before projectile tracing. Its accepted position
+    // is mirrored one-way into DamageCore, keeping ballistic target truth aligned with
+    // the simulation-owned AI position without introducing a second movement owner.
+    stepTacticalAI();
     ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_);
     damage_.fixedStep(config_.fixedStepSeconds);
+    // A same-slice injury can immediately remove an AI combatant. Clear action/fire
+    // authorization before invariant validation and before the snapshot is published.
+    syncTacticalAICombatState();
 
     const auto pendingDamageSequence=damage_.resultSequence();
     bool damageLedgerValid=pendingDamageSequence>=damageSequenceCheckpoint &&
@@ -238,7 +268,6 @@ void EngineCore::fixedStep() noexcept {
         visibility_.syncTarget(i,target.id,target.position,target.alive);
     }
     visibility_.update(cameraPosition(),character_.cameraYaw());
-    syncTacticalAI();
 
     state_.simulationSeconds+=config_.fixedStepSeconds;
     ++state_.simulationTick;
@@ -355,7 +384,15 @@ bool EngineCore::validateInvariants() const noexcept {
        !eq(state_.sprintRecoveryRemaining,weaponState.sprintRecoveryRemaining) || state_.reloadKind!=weaponState.reloadKind ||
        state_.activeProjectiles!=ballistics_.activeCount() || state_.damageHits!=damage_.totalHits() || state_.damageKills!=damage_.totalKills() ||
        state_.damageIncapacitations!=damage_.totalIncapacitations() || state_.tacticalAI.activeAgents!=ai.activeAgents ||
-       state_.tacticalAI.engagedAgents!=ai.engagedAgents) return false;
+       state_.tacticalAI.engagedAgents!=ai.engagedAgents || state_.tacticalAI.decisionsExecuted!=ai.decisionsExecuted) return false;
+
+    const std::size_t synchronizedCount=std::min(damage_.targetCount(),tacticalAI_.agentCount());
+    for(std::size_t i=0;i<synchronizedCount;++i){
+        const auto& target=damage_.targets()[i];
+        const auto& agent=tacticalAI_.agents()[i];
+        if(target.id!=agent.id || !eq(target.position.x,agent.position.x) || !eq(target.position.y,agent.position.y) || !eq(target.position.z,agent.position.z) ||
+           target.alive!=agent.alive || DamageCore::combatCapable(target)!=agent.combatCapable || !eq(std::clamp(target.health/100.0,0.0,1.0),agent.health01)) return false;
+    }
 
     if(damage_.targetCount()>0){
         const auto& target=damage_.targets()[0];
@@ -425,7 +462,10 @@ void EngineCore::observeFrame(double dt,std::uint32_t steps,bool clamped) noexce
 }
 
 Sha256Digest EngineCore::deterministicStateHash() const noexcept {
-    std::array<std::uint8_t,4096> buffer{};
+    // The hash buffer is fixed and deliberately oversized for the complete bounded
+    // 32-agent tactical state. It performs no allocation and makes the deterministic
+    // regression sensitive to action/memory/locomotion drift, not just player state.
+    std::array<std::uint8_t,16384> buffer{};
     std::size_t cursor=0;
     put64(buffer,cursor,state_.simulationTick);
     putD(buffer,cursor,state_.simulationSeconds);
@@ -437,10 +477,12 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     putD(buffer,cursor,state_.adsAlpha); putD(buffer,cursor,state_.sprintRecoveryRemaining);
     put64(buffer,cursor,state_.damageHits); put64(buffer,cursor,state_.damageKills); put64(buffer,cursor,state_.damageIncapacitations);
     put64(buffer,cursor,state_.activeProjectiles); put64(buffer,cursor,state_.tacticalAI.engagedAgents);
+    put64(buffer,cursor,state_.tacticalAI.decisionsExecuted);
     put64(buffer,cursor,damage_.resultSequence());
     for(std::size_t i=0;i<damage_.targetCount();++i){
         const auto& target=damage_.targets()[i];
         put64(buffer,cursor,target.id);
+        putD(buffer,cursor,target.position.x); putD(buffer,cursor,target.position.y); putD(buffer,cursor,target.position.z);
         putD(buffer,cursor,target.health);
         putD(buffer,cursor,target.helmetArmorJoules);
         putD(buffer,cursor,target.torsoArmorJoules);
@@ -448,6 +490,45 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         put64(buffer,cursor,target.lastDamageCorrelationId);
         put64(buffer,cursor,static_cast<std::uint64_t>(target.combatState));
         put64(buffer,cursor,target.alive?1u:0u);
+    }
+    put64(buffer,cursor,tacticalAI_.agentCount());
+    for(std::size_t i=0;i<tacticalAI_.agentCount();++i){
+        const auto& agent=tacticalAI_.agents()[i];
+        put64(buffer,cursor,agent.id);
+        putD(buffer,cursor,agent.position.x); putD(buffer,cursor,agent.position.y); putD(buffer,cursor,agent.position.z);
+        putD(buffer,cursor,agent.lastKnownPlayerPosition.x); putD(buffer,cursor,agent.lastKnownPlayerPosition.y); putD(buffer,cursor,agent.lastKnownPlayerPosition.z);
+        putD(buffer,cursor,agent.actionTarget.x); putD(buffer,cursor,agent.actionTarget.y); putD(buffer,cursor,agent.actionTarget.z);
+        putD(buffer,cursor,agent.coverPosition.x); putD(buffer,cursor,agent.coverPosition.y); putD(buffer,cursor,agent.coverPosition.z);
+        putD(buffer,cursor,agent.peekPosition.x); putD(buffer,cursor,agent.peekPosition.y); putD(buffer,cursor,agent.peekPosition.z);
+        putD(buffer,cursor,agent.facingYaw);
+        putD(buffer,cursor,agent.memoryAgeSeconds);
+        putD(buffer,cursor,agent.decisionAgeSeconds);
+        putD(buffer,cursor,agent.actionAgeSeconds);
+        putD(buffer,cursor,agent.confidence);
+        putD(buffer,cursor,agent.threat);
+        putD(buffer,cursor,agent.health01);
+        put64(buffer,cursor,agent.actionSequence);
+        put64(buffer,cursor,agent.squadSourceAgentId);
+        put64(buffer,cursor,agent.coverCandidateIndex);
+        put64(buffer,cursor,static_cast<std::uint64_t>(agent.alert));
+        put64(buffer,cursor,static_cast<std::uint64_t>(agent.perceptionSource));
+        put64(buffer,cursor,static_cast<std::uint64_t>(agent.action));
+        put64(buffer,cursor,agent.alive?1u:0u);
+        put64(buffer,cursor,agent.combatCapable?1u:0u);
+        put64(buffer,cursor,agent.hasLineOfSight?1u:0u);
+        put64(buffer,cursor,agent.heardPlayer?1u:0u);
+        put64(buffer,cursor,agent.hasCover?1u:0u);
+        put64(buffer,cursor,agent.fireAuthorized?1u:0u);
+        const WeaponState* aiWeapon=tacticalAI_.agentWeaponState(i);
+        if(aiWeapon!=nullptr){
+            put64(buffer,cursor,aiWeapon->ammoInMagazine);
+            put64(buffer,cursor,aiWeapon->reserveAmmo);
+            put64(buffer,cursor,aiWeapon->shotSequence);
+            putD(buffer,cursor,aiWeapon->fireCooldown);
+            putD(buffer,cursor,aiWeapon->reloadRemaining);
+            put64(buffer,cursor,aiWeapon->reloading?1u:0u);
+            put64(buffer,cursor,static_cast<std::uint64_t>(aiWeapon->reloadKind));
+        }
     }
     return sha256(std::span<const std::uint8_t>(buffer.data(),cursor));
 }
