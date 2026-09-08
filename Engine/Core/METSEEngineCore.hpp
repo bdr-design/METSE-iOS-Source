@@ -232,7 +232,10 @@ private:
     void applyDiscrete(const InputCommand& cmd) noexcept;
     void fixedStep() noexcept;
     void updateWeaponObstruction() noexcept;
-    void syncTacticalAI() noexcept;
+    void initializeTacticalAI() noexcept;
+    void syncTacticalAICombatState() noexcept;
+    void stepTacticalAI() noexcept;
+    void mirrorTacticalPositionsToDamage() noexcept;
     void syncSnapshot() noexcept;
     bool validateInvariants() const noexcept;
     void recordBlackBox(double dt,std::uint32_t steps,bool clamped) noexcept;

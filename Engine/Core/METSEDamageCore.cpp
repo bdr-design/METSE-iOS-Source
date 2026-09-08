@@ -34,6 +34,12 @@ void DamageCore::reset() noexcept {
     resultSequence_ = 0;
 }
 
+bool DamageCore::syncTargetPosition(std::size_t index,std::uint32_t id,Vec3 position) noexcept {
+    if(index>=targetCount_||id==0||targets_[index].id!=id||!finiteVec(position)) return false;
+    targets_[index].position=position;
+    return true;
+}
+
 double DamageCore::segmentPointDistanceXZ(const Vec3& a,const Vec3& b,const Vec3& p,double& t) noexcept {
     const double dx=b.x-a.x, dz=b.z-a.z;
     const double denom=dx*dx+dz*dz;

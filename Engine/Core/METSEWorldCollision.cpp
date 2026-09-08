@@ -2,46 +2,210 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+
 namespace metse {
-namespace {double segmentLength(Vec3 a,Vec3 b)noexcept{return std::sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)+(b.z-a.z)*(b.z-a.z));}}
-WorldCollisionCore::WorldCollisionCore()noexcept{
-obstacles_[0]={6,0,12,10,2.8,17,WorldMaterial::Concrete};
-obstacles_[1]={-14,0,8,-12,2.2,24,WorldMaterial::Steel};
-obstacles_[2]={-4,0,24,3,3.4,31,WorldMaterial::Concrete};
-// Thin timber partition: intentionally penetration-testable while retaining the
-// same established lane and raycast anchor used by Build 008 regressions.
-obstacles_[3]={14,0,-3,14.18,1.7,-1,WorldMaterial::Wood};
-obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
-// Low overhead: crouch/prone can pass, standing cannot.
-obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
-// Brick/Glass/Soil/Rock are supported by the material contract now; they are
-// introduced into battlefield geometry during 009-F rather than mutating the
-// established Build 008 Aim Truth test layout mid-foundation.
-obstacleCount_=6;
-}
-bool WorldCollisionCore::overlaps(double v,double mn,double mx)noexcept{return v>mn&&v<mx;}
-double WorldCollisionCore::nearestBoundary(double p,double d,double mn,double mx)noexcept{if(p<=mn)return mn;if(p>=mx)return mx;return std::abs(d-mn)<=std::abs(d-mx)?mn:mx;}
-CollisionResult WorldCollisionCore::resolve(double px,double pz,double dx,double dz,double r,double h)const noexcept{CollisionResult out{};if(!std::isfinite(px)||!std::isfinite(pz)||!std::isfinite(dx)||!std::isfinite(dz)||!std::isfinite(r)||!std::isfinite(h)||r<=0||h<=0){out.x=px;out.z=pz;return out;}const double minX=minWorldX_+r,maxX=maxWorldX_-r,minZ=minWorldZ_+r,maxZ=maxWorldZ_-r;out.x=std::clamp(dx,minX,maxX);out.z=std::clamp(dz,minZ,maxZ);if(out.x!=dx){out.hitX=true;++out.contacts;}if(out.z!=dz){out.hitZ=true;++out.contacts;}
-for(std::size_t i=0;i<obstacleCount_;++i){const auto&o=obstacles_[i];const bool verticalOverlap=(0.0<o.maxY&&h>o.minY);if(!verticalOverlap)continue;double mnx=o.minX-r,mxx=o.maxX+r,mnz=o.minZ-r,mxz=o.maxZ+r;if(overlaps(out.z,mnz,mxz)&&overlaps(out.x,mnx,mxx)){out.x=std::clamp(nearestBoundary(px,out.x,mnx,mxx),minX,maxX);out.hitX=true;++out.contacts;}}
-for(std::size_t i=0;i<obstacleCount_;++i){const auto&o=obstacles_[i];const bool verticalOverlap=(0.0<o.maxY&&h>o.minY);if(!verticalOverlap)continue;double mnx=o.minX-r,mxx=o.maxX+r,mnz=o.minZ-r,mxz=o.maxZ+r;if(overlaps(out.x,mnx,mxx)&&overlaps(out.z,mnz,mxz)){out.z=std::clamp(nearestBoundary(pz,out.z,mnz,mxz),minZ,maxZ);out.hitZ=true;++out.contacts;}}
-return out;}
+namespace {
 
-double WorldCollisionCore::clearanceHeightAt(double x,double z,double r)const noexcept{double clearance=std::numeric_limits<double>::infinity();for(std::size_t i=0;i<obstacleCount_;++i){const auto&o=obstacles_[i];if(o.minY<=0.01)continue;if(x>o.minX-r&&x<o.maxX+r&&z>o.minZ-r&&z<o.maxZ+r)clearance=std::min(clearance,o.minY);}return clearance;}
-
-bool WorldCollisionCore::segmentAabb(Vec3 a,Vec3 b,const WorldObstacle&o,double&tEntry,double&tExit,Vec3&normal)noexcept{
-const Vec3 d{b.x-a.x,b.y-a.y,b.z-a.z};double tmin=0.0,tmax=1.0;Vec3 enterNormal{};
-auto axis=[&](double origin,double dir,double mn,double mx,Vec3 negativeFaceNormal,Vec3 positiveFaceNormal){
-    if(std::abs(dir)<1e-10)return origin>=mn&&origin<=mx;
-    double inv=1.0/dir,t1=(mn-origin)*inv,t2=(mx-origin)*inv;Vec3 n1=negativeFaceNormal,n2=positiveFaceNormal;
-    if(t1>t2){std::swap(t1,t2);std::swap(n1,n2);}if(t1>tmin){tmin=t1;enterNormal=n1;}tmax=std::min(tmax,t2);return tmin<=tmax;
-};
-if(!axis(a.x,d.x,o.minX,o.maxX,{-1,0,0},{1,0,0})||!axis(a.y,d.y,o.minY,o.maxY,{0,-1,0},{0,1,0})||!axis(a.z,d.z,o.minZ,o.maxZ,{0,0,-1},{0,0,1}))return false;
-if(tmax<0.0||tmin>1.0)return false;tEntry=std::clamp(tmin,0.0,1.0);tExit=std::clamp(tmax,tEntry,1.0);normal=enterNormal;return true;
+double segmentLength(Vec3 a,Vec3 b) noexcept {
+    return std::sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)+(b.z-a.z)*(b.z-a.z));
 }
-WorldRayHit WorldCollisionCore::raycastSegment(Vec3 a,Vec3 b)const noexcept{WorldRayHit best{};best.t=2.0;const double length=segmentLength(a,b);for(std::size_t i=0;i<obstacleCount_;++i){double entry=0,exit=0;Vec3 normal{};if(segmentAabb(a,b,obstacles_[i],entry,exit,normal)&&entry<best.t){best.hit=true;best.t=entry;best.exitT=exit;best.point={a.x+(b.x-a.x)*entry,a.y+(b.y-a.y)*entry,a.z+(b.z-a.z)*entry};best.exitPoint={a.x+(b.x-a.x)*exit,a.y+(b.y-a.y)*exit,a.z+(b.z-a.z)*exit};best.normal=normal;best.material=obstacles_[i].material;best.obstacleIndex=i;best.thicknessMeters=length*std::max(0.0,exit-entry);}}
-// Ground is a terminal surface for the current battlefield prototype. It is Soil so
-// material telemetry remains truthful even though the terrain mesh is procedural.
-if(a.y>=0.0&&b.y<0.0){double t=a.y/(a.y-b.y);if(t<best.t){Vec3 p{a.x+(b.x-a.x)*t,0.0,a.z+(b.z-a.z)*t};best={true,t,t,p,p,{0,1,0},WorldMaterial::Soil,kMaxObstacles,0.0};}}
-return best;}
-bool WorldCollisionCore::validate()const noexcept{if(!std::isfinite(minWorldX_)||!std::isfinite(maxWorldX_)||!std::isfinite(minWorldZ_)||!std::isfinite(maxWorldZ_)||minWorldX_>=maxWorldX_||minWorldZ_>=maxWorldZ_||obstacleCount_>kMaxObstacles)return false;for(std::size_t i=0;i<obstacleCount_;++i){const auto&o=obstacles_[i];if(!std::isfinite(o.minX)||!std::isfinite(o.minY)||!std::isfinite(o.minZ)||!std::isfinite(o.maxX)||!std::isfinite(o.maxY)||!std::isfinite(o.maxZ)||o.minX>=o.maxX||o.minY>=o.maxY||o.minZ>=o.maxZ)return false;if(o.minX<=minWorldX_||o.maxX>=maxWorldX_||o.minZ<=minWorldZ_||o.maxZ>=maxWorldZ_)return false;if(static_cast<std::uint8_t>(o.material)>static_cast<std::uint8_t>(WorldMaterial::Rock))return false;}return true;}
+
+bool finiteVec(Vec3 value) noexcept {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+} // namespace
+
+WorldCollisionCore::WorldCollisionCore() noexcept {
+    obstacles_[0]={6,0,12,10,2.8,17,WorldMaterial::Concrete};
+    obstacles_[1]={-14,0,8,-12,2.2,24,WorldMaterial::Steel};
+    obstacles_[2]={-4,0,24,3,3.4,31,WorldMaterial::Concrete};
+    // Thin timber partition: intentionally penetration-testable while retaining the
+    // same established lane and raycast anchor used by Build 008 regressions.
+    obstacles_[3]={14,0,-3,14.18,1.7,-1,WorldMaterial::Wood};
+    obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
+    // Low overhead: crouch/prone can pass, standing cannot.
+    obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
+    // Brick/Glass/Soil/Rock are supported by the material contract now; they are
+    // introduced into battlefield geometry during 009-F rather than mutating the
+    // established Build 008 Aim Truth test layout mid-foundation.
+    obstacleCount_=6;
+    rebuildCoverCandidates();
+}
+
+bool WorldCollisionCore::overlaps(double value,double minimum,double maximum) noexcept {
+    return value>minimum && value<maximum;
+}
+
+double WorldCollisionCore::nearestBoundary(double previous,double desired,double minimum,double maximum) noexcept {
+    if(previous<=minimum) return minimum;
+    if(previous>=maximum) return maximum;
+    return std::abs(desired-minimum)<=std::abs(desired-maximum)?minimum:maximum;
+}
+
+CollisionResult WorldCollisionCore::resolve(double previousX,double previousZ,double desiredX,double desiredZ,double radius,double capsuleHeight) const noexcept {
+    CollisionResult out{};
+    if(!std::isfinite(previousX)||!std::isfinite(previousZ)||!std::isfinite(desiredX)||!std::isfinite(desiredZ)||
+       !std::isfinite(radius)||!std::isfinite(capsuleHeight)||radius<=0.0||capsuleHeight<=0.0){
+        out.x=previousX;
+        out.z=previousZ;
+        return out;
+    }
+    const double minX=minWorldX_+radius,maxX=maxWorldX_-radius,minZ=minWorldZ_+radius,maxZ=maxWorldZ_-radius;
+    out.x=std::clamp(desiredX,minX,maxX);
+    out.z=std::clamp(desiredZ,minZ,maxZ);
+    if(out.x!=desiredX){out.hitX=true;++out.contacts;}
+    if(out.z!=desiredZ){out.hitZ=true;++out.contacts;}
+
+    for(std::size_t i=0;i<obstacleCount_;++i){
+        const auto& obstacle=obstacles_[i];
+        const bool verticalOverlap=(0.0<obstacle.maxY&&capsuleHeight>obstacle.minY);
+        if(!verticalOverlap) continue;
+        const double minObstacleX=obstacle.minX-radius,maxObstacleX=obstacle.maxX+radius;
+        const double minObstacleZ=obstacle.minZ-radius,maxObstacleZ=obstacle.maxZ+radius;
+        if(overlaps(out.z,minObstacleZ,maxObstacleZ)&&overlaps(out.x,minObstacleX,maxObstacleX)){
+            out.x=std::clamp(nearestBoundary(previousX,out.x,minObstacleX,maxObstacleX),minX,maxX);
+            out.hitX=true;
+            ++out.contacts;
+        }
+    }
+    for(std::size_t i=0;i<obstacleCount_;++i){
+        const auto& obstacle=obstacles_[i];
+        const bool verticalOverlap=(0.0<obstacle.maxY&&capsuleHeight>obstacle.minY);
+        if(!verticalOverlap) continue;
+        const double minObstacleX=obstacle.minX-radius,maxObstacleX=obstacle.maxX+radius;
+        const double minObstacleZ=obstacle.minZ-radius,maxObstacleZ=obstacle.maxZ+radius;
+        if(overlaps(out.x,minObstacleX,maxObstacleX)&&overlaps(out.z,minObstacleZ,maxObstacleZ)){
+            out.z=std::clamp(nearestBoundary(previousZ,out.z,minObstacleZ,maxObstacleZ),minZ,maxZ);
+            out.hitZ=true;
+            ++out.contacts;
+        }
+    }
+    return out;
+}
+
+double WorldCollisionCore::clearanceHeightAt(double x,double z,double radius) const noexcept {
+    double clearance=std::numeric_limits<double>::infinity();
+    for(std::size_t i=0;i<obstacleCount_;++i){
+        const auto& obstacle=obstacles_[i];
+        if(obstacle.minY<=0.01) continue;
+        if(x>obstacle.minX-radius&&x<obstacle.maxX+radius&&z>obstacle.minZ-radius&&z<obstacle.maxZ+radius)
+            clearance=std::min(clearance,obstacle.minY);
+    }
+    return clearance;
+}
+
+bool WorldCollisionCore::segmentAabb(Vec3 a,Vec3 b,const WorldObstacle& obstacle,double& tEntry,double& tExit,Vec3& normal) noexcept {
+    const Vec3 delta{b.x-a.x,b.y-a.y,b.z-a.z};
+    double tMin=0.0,tMax=1.0;
+    Vec3 enterNormal{};
+    auto axis=[&](double origin,double direction,double minimum,double maximum,Vec3 negativeFaceNormal,Vec3 positiveFaceNormal){
+        if(std::abs(direction)<1e-10) return origin>=minimum&&origin<=maximum;
+        const double inverse=1.0/direction;
+        double t1=(minimum-origin)*inverse,t2=(maximum-origin)*inverse;
+        Vec3 n1=negativeFaceNormal,n2=positiveFaceNormal;
+        if(t1>t2){std::swap(t1,t2);std::swap(n1,n2);}
+        if(t1>tMin){tMin=t1;enterNormal=n1;}
+        tMax=std::min(tMax,t2);
+        return tMin<=tMax;
+    };
+    if(!axis(a.x,delta.x,obstacle.minX,obstacle.maxX,{-1,0,0},{1,0,0})||
+       !axis(a.y,delta.y,obstacle.minY,obstacle.maxY,{0,-1,0},{0,1,0})||
+       !axis(a.z,delta.z,obstacle.minZ,obstacle.maxZ,{0,0,-1},{0,0,1})) return false;
+    if(tMax<0.0||tMin>1.0) return false;
+    tEntry=std::clamp(tMin,0.0,1.0);
+    tExit=std::clamp(tMax,tEntry,1.0);
+    normal=enterNormal;
+    return true;
+}
+
+WorldRayHit WorldCollisionCore::raycastSegment(Vec3 a,Vec3 b) const noexcept {
+    WorldRayHit best{};
+    best.t=2.0;
+    const double length=segmentLength(a,b);
+    for(std::size_t i=0;i<obstacleCount_;++i){
+        double entry=0.0,exit=0.0;
+        Vec3 normal{};
+        if(segmentAabb(a,b,obstacles_[i],entry,exit,normal)&&entry<best.t){
+            best.hit=true;
+            best.t=entry;
+            best.exitT=exit;
+            best.point={a.x+(b.x-a.x)*entry,a.y+(b.y-a.y)*entry,a.z+(b.z-a.z)*entry};
+            best.exitPoint={a.x+(b.x-a.x)*exit,a.y+(b.y-a.y)*exit,a.z+(b.z-a.z)*exit};
+            best.normal=normal;
+            best.material=obstacles_[i].material;
+            best.obstacleIndex=i;
+            best.thicknessMeters=length*std::max(0.0,exit-entry);
+        }
+    }
+    // Ground is a terminal surface for the current battlefield prototype. It is Soil so
+    // material telemetry remains truthful even though the terrain mesh is procedural.
+    if(a.y>=0.0&&b.y<0.0){
+        const double t=a.y/(a.y-b.y);
+        if(t<best.t){
+            const Vec3 point{a.x+(b.x-a.x)*t,0.0,a.z+(b.z-a.z)*t};
+            best={true,t,t,point,point,{0,1,0},WorldMaterial::Soil,kMaxObstacles,0.0};
+        }
+    }
+    return best;
+}
+
+void WorldCollisionCore::rebuildCoverCandidates() noexcept {
+    coverCandidates_={};
+    coverCandidateCount_=0;
+    constexpr double kAgentRadius=0.34;
+    constexpr double kCoverGap=0.24;
+    constexpr double kCandidateOffset=kAgentRadius+kCoverGap;
+    constexpr double kStandingCapsuleHeight=1.72;
+
+    auto append=[&](std::size_t obstacleIndex,Vec3 position,Vec3 outwardNormal){
+        if(coverCandidateCount_>=kMaxCoverCandidates) return;
+        if(position.x<=minWorldX_+kAgentRadius||position.x>=maxWorldX_-kAgentRadius||
+           position.z<=minWorldZ_+kAgentRadius||position.z>=maxWorldZ_-kAgentRadius) return;
+        const double clearance=clearanceHeightAt(position.x,position.z,kAgentRadius);
+        if(std::isfinite(clearance)&&clearance<kStandingCapsuleHeight+0.02) return;
+        const auto resolved=resolve(position.x,position.z,position.x,position.z,kAgentRadius,kStandingCapsuleHeight);
+        if(std::abs(resolved.x-position.x)>1e-8||std::abs(resolved.z-position.z)>1e-8) return;
+        coverCandidates_[coverCandidateCount_++]={position,outwardNormal,obstacleIndex,true};
+    };
+
+    for(std::size_t i=0;i<obstacleCount_;++i){
+        const auto& obstacle=obstacles_[i];
+        // Overhead-only geometry cannot protect a standing chest and must never become cover.
+        if(obstacle.minY>0.05||obstacle.maxY<1.15) continue;
+        const double centerX=(obstacle.minX+obstacle.maxX)*0.5;
+        const double centerZ=(obstacle.minZ+obstacle.maxZ)*0.5;
+        append(i,{obstacle.minX-kCandidateOffset,0.0,centerZ},{-1.0,0.0,0.0});
+        append(i,{obstacle.maxX+kCandidateOffset,0.0,centerZ},{1.0,0.0,0.0});
+        append(i,{centerX,0.0,obstacle.minZ-kCandidateOffset},{0.0,0.0,-1.0});
+        append(i,{centerX,0.0,obstacle.maxZ+kCandidateOffset},{0.0,0.0,1.0});
+    }
+}
+
+bool WorldCollisionCore::validate() const noexcept {
+    if(!std::isfinite(minWorldX_)||!std::isfinite(maxWorldX_)||!std::isfinite(minWorldZ_)||!std::isfinite(maxWorldZ_)||
+       minWorldX_>=maxWorldX_||minWorldZ_>=maxWorldZ_||obstacleCount_>kMaxObstacles||coverCandidateCount_>kMaxCoverCandidates) return false;
+    for(std::size_t i=0;i<obstacleCount_;++i){
+        const auto& obstacle=obstacles_[i];
+        if(!std::isfinite(obstacle.minX)||!std::isfinite(obstacle.minY)||!std::isfinite(obstacle.minZ)||
+           !std::isfinite(obstacle.maxX)||!std::isfinite(obstacle.maxY)||!std::isfinite(obstacle.maxZ)||
+           obstacle.minX>=obstacle.maxX||obstacle.minY>=obstacle.maxY||obstacle.minZ>=obstacle.maxZ) return false;
+        if(obstacle.minX<=minWorldX_||obstacle.maxX>=maxWorldX_||obstacle.minZ<=minWorldZ_||obstacle.maxZ>=maxWorldZ_) return false;
+        if(static_cast<std::uint8_t>(obstacle.material)>static_cast<std::uint8_t>(WorldMaterial::Rock)) return false;
+    }
+    for(std::size_t i=0;i<coverCandidateCount_;++i){
+        const auto& candidate=coverCandidates_[i];
+        if(!candidate.valid||candidate.obstacleIndex>=obstacleCount_||!finiteVec(candidate.position)||!finiteVec(candidate.outwardNormal)) return false;
+        const double normalLength=std::hypot(candidate.outwardNormal.x,candidate.outwardNormal.z);
+        if(std::abs(normalLength-1.0)>1e-8||std::abs(candidate.outwardNormal.y)>1e-9) return false;
+        if(candidate.position.x<=minWorldX_||candidate.position.x>=maxWorldX_||candidate.position.z<=minWorldZ_||candidate.position.z>=maxWorldZ_) return false;
+        const auto& obstacle=obstacles_[candidate.obstacleIndex];
+        if(obstacle.minY>0.05||obstacle.maxY<1.15) return false;
+    }
+    for(std::size_t i=coverCandidateCount_;i<kMaxCoverCandidates;++i){
+        if(coverCandidates_[i].valid) return false;
+    }
+    return true;
+}
+
 } // namespace metse
