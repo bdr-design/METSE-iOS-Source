@@ -33,11 +33,15 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
         }
         if(worldHit.hit){++metrics_.impacts;++metrics_.worldImpacts;
             if(worldHit.material==WorldMaterial::Wood && energy>420.0 && p.penetrations<1){++p.penetrations;++metrics_.penetrations;p.velocity.x*=0.58;p.velocity.y*=0.58;p.velocity.z*=0.58;p.position={worldHit.point.x+p.velocity.x*0.0008,worldHit.point.y+p.velocity.y*0.0008,worldHit.point.z+p.velocity.z*0.0008};continue;}
+            ++metrics_.terminalWorldImpacts;
             p.position=worldHit.point;p.active=false;continue;
         }
         p.position=to;p.ageSeconds+=dt;
     }
 }
 std::size_t BallisticsCore::activeCount() const noexcept {std::size_t n=0;for(const auto& p:projectiles_)if(p.active)++n;return n;}
-bool BallisticsCore::validate() const noexcept {for(const auto& p:projectiles_)if(p.active){if(!std::isfinite(p.position.x)||!std::isfinite(p.position.y)||!std::isfinite(p.position.z)||!std::isfinite(p.velocity.x)||!std::isfinite(p.velocity.y)||!std::isfinite(p.velocity.z)||!std::isfinite(p.massKg)||p.massKg<=0.0||!std::isfinite(p.ageSeconds)||p.ageSeconds<0.0||p.correlationId==0)return false;}return activeCount()<=kMaxProjectiles;}
+bool BallisticsCore::validate() const noexcept {
+    if(metrics_.terminalWorldImpacts>metrics_.worldImpacts||metrics_.penetrations>metrics_.worldImpacts)return false;
+    for(const auto& p:projectiles_)if(p.active){if(!std::isfinite(p.position.x)||!std::isfinite(p.position.y)||!std::isfinite(p.position.z)||!std::isfinite(p.velocity.x)||!std::isfinite(p.velocity.y)||!std::isfinite(p.velocity.z)||!std::isfinite(p.massKg)||p.massKg<=0.0||!std::isfinite(p.ageSeconds)||p.ageSeconds<0.0||p.correlationId==0)return false;}return activeCount()<=kMaxProjectiles;
+}
 } // namespace metse
