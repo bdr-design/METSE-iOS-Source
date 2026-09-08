@@ -44,6 +44,7 @@ bool TacticalAICore::syncAgent(std::size_t index, std::uint32_t id, Vec3 positio
         agent.threat = 0.0;
         agent.alert = AIAlertState::Unaware;
         agent.perceptionSource = AIPerceptionSource::None;
+        agent.lastKnownPlayerPosition = {};
         agent.memoryAgeSeconds = 0.0;
     }
     agentCount_ = std::max(agentCount_, index + 1);
@@ -97,14 +98,15 @@ void TacticalAICore::fixedStep(double dt,
             agent.lastKnownPlayerPosition = hearingEstimate(agent.id,playerPosition,audioConfidence,config_.hearingMaxLocalizationErrorMeters);
             agent.perceptionSource = AIPerceptionSource::Hearing;
             agent.memoryAgeSeconds = 0.0;
-        } else if (agent.confidence > 0.0) {
+        } else if (agent.perceptionSource != AIPerceptionSource::None) {
             agent.memoryAgeSeconds += dt;
             const double decay = dt/config_.memorySeconds;
             agent.confidence = std::max(0.0,agent.confidence-decay);
-            if (agent.memoryAgeSeconds >= config_.memorySeconds) {
+            if (agent.memoryAgeSeconds >= config_.memorySeconds || agent.confidence <= 1e-9) {
                 agent.confidence = 0.0;
-                agent.memoryAgeSeconds = config_.memorySeconds;
+                agent.memoryAgeSeconds = std::min(agent.memoryAgeSeconds,config_.memorySeconds);
                 agent.perceptionSource = AIPerceptionSource::None;
+                agent.lastKnownPlayerPosition = {};
             }
         }
 
@@ -152,6 +154,7 @@ bool TacticalAICore::validate() const noexcept {
             !std::isfinite(a.memoryAgeSeconds)||a.memoryAgeSeconds<0.0||!std::isfinite(a.confidence)||a.confidence<0.0||a.confidence>1.000001||
             !std::isfinite(a.threat)||a.threat<0.0||a.threat>1.000001) return false;
         if (a.alert==AIAlertState::Engaged && (!a.hasLineOfSight || a.perceptionSource!=AIPerceptionSource::Vision)) return false;
+        if (a.perceptionSource==AIPerceptionSource::None && a.confidence>1e-9) return false;
     }
     return true;
 }
