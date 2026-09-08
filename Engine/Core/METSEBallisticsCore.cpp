@@ -22,12 +22,18 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
         p.velocity.x*=drag; p.velocity.z*=drag; p.velocity.y=p.velocity.y*drag-9.81*dt;
         Vec3 to={from.x+p.velocity.x*dt,from.y+p.velocity.y*dt,from.z+p.velocity.z*dt};
         const double energy=0.5*p.massKg*speed*speed;
-        auto damageResult=damage.applySegment(from,to,energy,p.correlationId);
-        if(damageResult.hit){p.position=to;p.active=false;++metrics_.impacts;++metrics_.targetImpacts;continue;}
-        const auto hit=world.raycastSegment(from,to);
-        if(hit.hit){++metrics_.impacts;++metrics_.worldImpacts;
-            if(hit.material==WorldMaterial::Wood && energy>420.0 && p.penetrations<1){++p.penetrations;++metrics_.penetrations;p.velocity.x*=0.58;p.velocity.y*=0.58;p.velocity.z*=0.58;p.position={hit.point.x+p.velocity.x*0.0008,hit.point.y+p.velocity.y*0.0008,hit.point.z+p.velocity.z*0.0008};continue;}
-            p.position=hit.point;p.active=false;continue;
+        const auto targetHit=damage.traceSegment(from,to);
+        const auto worldHit=world.raycastSegment(from,to);
+
+        // Collision truth is nearest-hit wins. A target can never be damaged through
+        // a nearer wall, and a nearer target can never be swallowed by a farther wall.
+        if(targetHit.hit && (!worldHit.hit || targetHit.t <= worldHit.t + 1e-9)){
+            const auto result=damage.applyIntersection(targetHit,energy,p.correlationId);
+            if(result.hit){p.position={from.x+(to.x-from.x)*targetHit.t,from.y+(to.y-from.y)*targetHit.t,from.z+(to.z-from.z)*targetHit.t};p.active=false;++metrics_.impacts;++metrics_.targetImpacts;continue;}
+        }
+        if(worldHit.hit){++metrics_.impacts;++metrics_.worldImpacts;
+            if(worldHit.material==WorldMaterial::Wood && energy>420.0 && p.penetrations<1){++p.penetrations;++metrics_.penetrations;p.velocity.x*=0.58;p.velocity.y*=0.58;p.velocity.z*=0.58;p.position={worldHit.point.x+p.velocity.x*0.0008,worldHit.point.y+p.velocity.y*0.0008,worldHit.point.z+p.velocity.z*0.0008};continue;}
+            p.position=worldHit.point;p.active=false;continue;
         }
         p.position=to;p.ageSeconds+=dt;
     }
