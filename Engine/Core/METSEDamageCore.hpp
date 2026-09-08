@@ -16,6 +16,14 @@ struct DamageTarget {
     bool alive = true;
 };
 
+struct DamageIntersection {
+    bool hit = false;
+    double t = 2.0;
+    std::size_t targetIndex = 0;
+    std::uint32_t targetId = 0;
+    HitRegion region = HitRegion::None;
+};
+
 struct DamageResult {
     bool hit = false;
     bool killed = false;
@@ -31,6 +39,8 @@ public:
     static constexpr std::size_t kMaxTargets = 32;
     DamageCore() noexcept;
     void reset() noexcept;
+    [[nodiscard]] DamageIntersection traceSegment(const Vec3& from,const Vec3& to) const noexcept;
+    DamageResult applyIntersection(const DamageIntersection& hit,double projectileEnergyJ,std::uint64_t correlationId) noexcept;
     DamageResult applySegment(const Vec3& from, const Vec3& to, double projectileEnergyJ, std::uint64_t correlationId) noexcept;
     [[nodiscard]] const std::array<DamageTarget,kMaxTargets>& targets() const noexcept { return targets_; }
     [[nodiscard]] std::size_t targetCount() const noexcept { return targetCount_; }
