@@ -16,6 +16,21 @@ on:
       - 'BUILD'
       - 'SOURCE_INTEGRITY_SHA256.txt'
       - '.github/workflows/build-ios-unsigned.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'iOS/**'
+      - 'Engine/**'
+      - 'Shaders/**'
+      - 'Content/**'
+      - 'Scripts/**'
+      - 'Tests/**'
+      - 'Docs/**'
+      - 'project.yml'
+      - 'VERSION'
+      - 'BUILD'
+      - 'SOURCE_INTEGRITY_SHA256.txt'
+      - '.github/workflows/build-ios-unsigned.yml'
 permissions:
   contents: read
 concurrency:
@@ -32,6 +47,8 @@ jobs:
         run: python3 Scripts/verify_integrity.py
       - name: Architecture guardrails
         run: python3 Scripts/guardrails.py
+      - name: Build 009-E action/cover guardrails
+        run: python3 Scripts/guardrails_009e.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
       - name: Swift syntax fast gate
