@@ -12,10 +12,10 @@ obstacles_[3]={14,0,-3,26,1.7,-1,WorldMaterial::Wood};
 obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
 // Low overhead: crouch/prone can pass, standing cannot.
 obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
-// Build 009 material lanes: deliberately thin test walls kept away from Aim Truth targets.
-obstacles_[6]={28.0,0,-22,28.12,2.5,-17,WorldMaterial::Brick};
-obstacles_[7]={-32.0,0,14,-31.96,2.2,20,WorldMaterial::Glass};
-obstacleCount_=8;
+// Brick/Glass/Soil/Rock are supported by the material contract now; they are
+// introduced into battlefield geometry during 009-F rather than mutating the
+// established Build 008 Aim Truth test layout mid-foundation.
+obstacleCount_=6;
 }
 bool WorldCollisionCore::overlaps(double v,double mn,double mx)noexcept{return v>mn&&v<mx;}
 double WorldCollisionCore::nearestBoundary(double p,double d,double mn,double mx)noexcept{if(p<=mn)return mn;if(p>=mx)return mx;return std::abs(d-mn)<=std::abs(d-mx)?mn:mx;}
