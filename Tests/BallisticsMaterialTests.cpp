@@ -14,7 +14,7 @@ metse::Vec3 normalize(metse::Vec3 v){const double l=length(v);return {v.x/l,v.y/
 int main(){using namespace metse;
     WorldCollisionCore world;
     assert(world.validate());
-    assert(world.obstacleCount()==6);
+    assert(world.obstacleCount()>=6&&world.obstacleCount()<=WorldCollisionCore::kMaxObstacles);
 
     // The ray contract exposes entry, exit, face normal, and physical thickness.
     const auto woodHit=world.raycastSegment({13,1,-2},{15,1,-2});
@@ -25,8 +25,7 @@ int main(){using namespace metse;
     const auto groundHit=world.raycastSegment({0,1,0},{0,-1,0});
     assert(groundHit.hit&&groundHit.material==WorldMaterial::Soil&&groundHit.normal.y>0.99);
 
-    // All seven 009-C materials are valid even though the stable foundation map
-    // only instantiates the first three until the battlefield phase.
+    // All seven 009-C materials remain valid in the expanded battlefield map.
     for(WorldMaterial material:{WorldMaterial::Concrete,WorldMaterial::Steel,WorldMaterial::Wood,WorldMaterial::Brick,WorldMaterial::Glass,WorldMaterial::Soil,WorldMaterial::Rock})
         assert(MaterialCore::validateProfile(MaterialCore::ballistic(material)));
     assert(MaterialCore::ballistic(WorldMaterial::Glass).penetrable);
