@@ -45,6 +45,7 @@ req('MARKETING_VERSION: "0.3.0"' in project,'project version must remain 0.3.0 d
 req('CURRENT_PROJECT_VERSION: "8"' in project,'project build must remain 8 during Build 009 development')
 req('TARGETED_DEVICE_FAMILY: "1"' in project,'iPhone-only project required')
 req('GENERATE_INFOPLIST_FILE: NO' in project,'Generated plist forbidden')
+req('sdk: AVFoundation.framework' in project,'Native audio target must link AVFoundation')
 
 required=[
     'Engine/Core/METSEInputCommandQueue.hpp','Engine/Core/METSEInputCommandQueue.cpp',

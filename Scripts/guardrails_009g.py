@@ -39,6 +39,7 @@ runner = text("Scripts/test_engine_core.sh")
 build = text("Scripts/build_unsigned_ipa.sh")
 workflow = text(".github/workflows/build-ios-unsigned.yml")
 documentation = text("Docs/BUILD009_G_AUDIO_FX_VISIBILITY_AR.md")
+project = text("project.yml")
 
 # WorldCollision is the only surface/acoustic geometry owner. The acoustic probe is
 # hard bounded and derives every return from the same raycast used by gameplay.
@@ -170,6 +171,8 @@ require("constexpr std::size_t kAudioVoiceCapacity=12;" in presenter_mm and
         "std::array<METSEAudioVoice,kAudioVoiceCapacity>" in presenter_mm and
         "compare_exchange_strong" in presenter_mm,
         "fixed non-blocking native audio voice pool")
+require("sdk: AVFoundation.framework" in project,
+        "iOS target links the native AVFoundation audio framework")
 require("droppedVoices.fetch_add" in presenter_mm,
         "native audio saturation drop accounting")
 require("kRenderTargetCap = metse::VisibilityCore::kMaxEntities" in bridge,
