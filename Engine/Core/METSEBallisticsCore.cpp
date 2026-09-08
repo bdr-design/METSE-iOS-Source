@@ -44,7 +44,7 @@ void BallisticsCore::fixedStep(double dt,const WorldCollisionCore& world,DamageC
             // Collision truth is nearest-hit wins. A target can never be damaged through
             // a nearer world surface, and a farther wall never swallows a nearer target.
             if(targetHit.hit && (!worldHit.hit || targetHit.t <= worldHit.t + 1e-9)){
-                const auto result=damage.applyIntersection(targetHit,energy,p.correlationId);
+                const auto result=damage.applyIntersection(targetHit,energy,p.correlationId,normalize(p.velocity));
                 if(result.hit){
                     p.position={from.x+(to.x-from.x)*targetHit.t,from.y+(to.y-from.y)*targetHit.t,from.z+(to.z-from.z)*targetHit.t};
                     p.active=false;++metrics_.impacts;++metrics_.targetImpacts;break;
