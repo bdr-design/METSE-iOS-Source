@@ -35,10 +35,17 @@ req('coverCandidates()' in world and 'coverCandidateCount()' in world,'World cov
 # TacticalAI owns locomotion; DamageCore is a one-way ballistic target mirror.
 req('syncTargetPosition' in damage,'DamageCore tactical position mirror missing')
 req('Tactical AI position remains authoritative' in ai,'Tactical locomotion ownership contract missing')
-req('mirrorTacticalAIPositionsToDamage()' in engine,'Engine one-way AI->Damage mirror missing')
+req('mirrorTacticalPositionsToDamage()' in engine,'Engine one-way AI->Damage mirror missing')
 req('damage_.syncTargetPosition' in engine,'Engine must mirror TacticalAI transforms into DamageCore')
 req('tacticalAI_.syncAgentCombatState' in engine,'Normal simulation must sync combat state without overwriting TacticalAI position')
-req('tacticalAI_.agents()[i].position' in engine and 'damage_.targets()[i].position' in engine,'AI/Damage position invariant missing')
+req('const auto& target=damage_.targets()[i];' in engine and
+    'const auto& agent=tacticalAI_.agents()[i];' in engine and
+    '!eq(target.position.x,agent.position.x)' in engine and
+    '!eq(target.position.y,agent.position.y)' in engine and
+    '!eq(target.position.z,agent.position.z)' in engine and
+    'DamageCore::combatCapable(target)!=agent.combatCapable' in engine,
+    'AI/Damage transform and combat-state invariant missing')
+req('stepTacticalAI();\n    ballistics_.fixedStep' in engine,'AI locomotion mirror must occur before ballistic target tracing')
 
 # Bounded action work and no magical-awareness firing.
 for token in ('AIActionState','MoveToCover','Peek','Reload','Suppress','Flank','Retreat','Search'):
