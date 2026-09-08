@@ -18,7 +18,9 @@ struct Projectile {
 };
 
 struct BallisticsMetrics {
-    std::uint64_t spawned=0, impacts=0, worldImpacts=0, targetImpacts=0, penetrations=0, expired=0, rejectedSpawns=0;
+    // impacts/worldImpacts are contact counters. A penetrating round can therefore
+    // contribute more than one contact. terminalWorldImpacts counts only stops.
+    std::uint64_t spawned=0, impacts=0, worldImpacts=0, terminalWorldImpacts=0, targetImpacts=0, penetrations=0, expired=0, rejectedSpawns=0;
 };
 
 class BallisticsCore final {
