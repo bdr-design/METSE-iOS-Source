@@ -43,6 +43,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Temporary manifest digest diagnostic
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          target='Scripts/verify_integrity.py'
+          for line in Path('SOURCE_INTEGRITY_SHA256.txt').read_text(encoding='utf-8').splitlines():
+              if line.endswith(target):
+                  digest, rel=line.split('  ',1)
+                  print('manifest_rel_repr=',repr(rel))
+                  print('manifest_digest_repr=',repr(digest))
+                  print('manifest_digest_len=',len(digest))
+                  print('manifest_digest_codepoints=',[ord(ch) for ch in digest])
+          PY
       - name: Source integrity
         run: python3 Scripts/verify_integrity.py
       - name: Architecture guardrails
