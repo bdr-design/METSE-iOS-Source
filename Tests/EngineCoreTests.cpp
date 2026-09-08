@@ -22,6 +22,7 @@ InputCommandQueue q;assert(q.validate());for(int i=0;i<500;++i){assert(q.pushMov
 q.reset();for(std::size_t i=0;i<InputCommandQueue::kCapacity;++i)assert(q.pushFire());assert(!q.pushReload());assert(q.metrics().rejectedCritical==1);
 
 WorldCollisionCore world;assert(world.validate());assert(world.obstacleCount()==6);auto standBlock=world.resolve(-3,8,0,8,.34,1.78);assert(standBlock.hitX||standBlock.hitZ);auto crouchPass=world.resolve(-3,8,0,8,.34,1.18);assert(!crouchPass.hitX&&!crouchPass.hitZ);assert(std::isfinite(world.clearanceHeightAt(0,8,.2)));
+// low roof regression: crouch passes while standing is rejected.
 auto rayHit=world.raycastSegment({13,1,-2},{27,1,-2});assert(rayHit.hit&&rayHit.material==WorldMaterial::Wood);
 
 WeaponCore weapon;assert(weapon.validate());weapon.setAimHeld(true);for(int i=0;i<20;++i)weapon.fixedStep(1.0/60.0,0,0);assert(weapon.state().adsAlpha>.95);ShotSolution shot{};assert(weapon.fire({0,1.64,0},0,0,77,shot));assert(weapon.state().ammoInMagazine==29);assert(!weapon.fire({0,1.64,0},0,0,78,shot));for(int i=0;i<10;++i)weapon.fixedStep(1.0/60.0,0,0);assert(weapon.requestReload());for(int i=0;i<150;++i)weapon.fixedStep(1.0/60.0,0,0);assert(!weapon.state().reloading&&weapon.state().ammoInMagazine==30&&weapon.state().reserveAmmo==89);
@@ -34,8 +35,6 @@ for(double z: {25.0,50.0,100.0}){double lambda=(z-preview.origin.z)/preview.dire
 DamageCore damage;assert(damage.targetCount()==2);const auto&t0=damage.targets()[0];const auto&t1=damage.targets()[1];assert(!world.raycastSegment(cam,{t0.position.x,1.05,t0.position.z}).hit);assert(!world.raycastSegment(cam,{t1.position.x,1.05,t1.position.z}).hit);
 auto hit=damage.applySegment({t0.position.x,1.7,t0.position.z-1},{t0.position.x,1.7,t0.position.z+1},1300,1001);assert(hit.hit&&hit.region==HitRegion::Head&&hit.killed);assert(damage.totalKills()==1&&damage.validate());
 
-// On-device regression: aim camera at visible target zero, spawn from the real
-// muzzle solution, and prove continuous ballistics reaches target before world.
 DamageCore aimDamage;BallisticsCore aimBallistics;const auto&aimTarget=aimDamage.targets()[0];double dx=aimTarget.position.x-cam.x,dz=aimTarget.position.z-cam.z,dy=1.2-cam.y;double yaw=std::atan2(dx,dz),pitch=std::atan2(dy,std::hypot(dx,dz));ShotSolution aimed{};assert(truth.previewShot(cam,yaw,pitch,9100,aimed));assert(aimBallistics.spawn(aimed));for(int i=0;i<20&&aimDamage.totalHits()==0;++i)aimBallistics.fixedStep(1.0/60.0,world,aimDamage);assert(aimDamage.totalHits()==1);assert(aimBallistics.metrics().targetImpacts==1);assert(aimBallistics.metrics().worldImpacts==0);
 
 DamageCore ballisticDamage;BallisticsCore ballistics;ShotSolution fast{};fast.origin={-10,1.7,0};fast.direction={0,0,1};fast.muzzleVelocity=820;fast.massKg=.004;fast.correlationId=42;assert(ballistics.spawn(fast));for(int i=0;i<4;++i)ballistics.fixedStep(1.0/60.0,world,ballisticDamage);assert(ballistics.validate());
@@ -54,4 +53,5 @@ EngineCore a,b;for(int i=0;i<240;++i){if(i%40==0){a.triggerFire();b.triggerFire(
 
 a.setMovementInput(std::numeric_limits<double>::quiet_NaN(),0);assert(a.diagnostics().inputQueue.rejectedInvalid>=1);auto before=a.snapshot();assert(!a.testOnlyExecuteInvariantViolation());auto after=a.snapshot();assert(before.playerX==after.playerX&&before.playerZ==after.playerZ&&a.diagnostics().integrity.commandsRolledBack>=1);
 for(int i=0;i<900;++i)a.advance(1.0/60.0);assert(a.diagnostics().retainedBlackBoxFrames==EngineCore::kBlackBoxCapacity);assert(a.diagnostics().observatory.retainedFrames==ObservatoryCore::kFrameCapacity);
+std::cout<<"METSE Build 008 Mega Combat Foundation Tests: PASS\n";
 std::cout<<"METSE Build 008 Aim Truth Regression Tests: PASS\n";}
