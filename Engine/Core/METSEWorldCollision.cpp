@@ -8,7 +8,9 @@ WorldCollisionCore::WorldCollisionCore()noexcept{
 obstacles_[0]={6,0,12,10,2.8,17,WorldMaterial::Concrete};
 obstacles_[1]={-14,0,8,-12,2.2,24,WorldMaterial::Steel};
 obstacles_[2]={-4,0,24,3,3.4,31,WorldMaterial::Concrete};
-obstacles_[3]={14,0,-3,26,1.7,-1,WorldMaterial::Wood};
+// Thin timber partition: intentionally penetration-testable while retaining the
+// same established lane and raycast anchor used by Build 008 regressions.
+obstacles_[3]={14,0,-3,14.18,1.7,-1,WorldMaterial::Wood};
 obstacles_[4]={-20,0,-22,-11,3.0,-13,WorldMaterial::Concrete};
 // Low overhead: crouch/prone can pass, standing cannot.
 obstacles_[5]={-2.8,1.34,6.0,2.8,1.65,10.5,WorldMaterial::Steel};
