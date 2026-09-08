@@ -15,17 +15,21 @@ struct Projectile {
     double ageSeconds=0.0;
     std::uint64_t correlationId=0;
     std::uint8_t penetrations=0;
+    std::uint8_t ricochets=0;
 };
 
 struct BallisticsMetrics {
-    // impacts/worldImpacts are contact counters. A penetrating round can therefore
-    // contribute more than one contact. terminalWorldImpacts counts only stops.
-    std::uint64_t spawned=0, impacts=0, worldImpacts=0, terminalWorldImpacts=0, targetImpacts=0, penetrations=0, expired=0, rejectedSpawns=0;
+    // impacts/worldImpacts are contact counters. A penetrating or ricocheting round
+    // can contribute more than one contact. terminalWorldImpacts counts only stops.
+    std::uint64_t spawned=0, impacts=0, worldImpacts=0, terminalWorldImpacts=0, targetImpacts=0, penetrations=0, ricochets=0, expired=0, rejectedSpawns=0;
 };
 
 class BallisticsCore final {
 public:
     static constexpr std::size_t kMaxProjectiles=128;
+    static constexpr std::uint8_t kMaxPenetrationsPerProjectile=2;
+    static constexpr std::uint8_t kMaxRicochetsPerProjectile=1;
+    static constexpr std::uint8_t kMaxContactsPerStep=4;
     void reset() noexcept;
     bool spawn(const ShotSolution& shot) noexcept;
     void fixedStep(double dt,const WorldCollisionCore& world,DamageCore& damage) noexcept;
