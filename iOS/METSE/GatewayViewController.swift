@@ -89,12 +89,10 @@ final class GatewayViewController: UIViewController {
         }, for: .touchUpInside)
 
         let metadata = UILabel()
-        metadata.text = "BUILD 007  •  WORLD COLLISION  •  OBSERVATORY  •  NATIVE METAL  •  32 MAX"
-        metadata.font = .monospacedSystemFont(ofSize: 9.5, weight: .medium)
+        metadata.text = "BUILD 008  •  MEGA COMBAT FOUNDATION  •  NATIVE METAL  •  32 MAX"
+        metadata.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
         metadata.textColor = UIColor.white.withAlphaComponent(0.42)
         metadata.numberOfLines = 2
-        metadata.adjustsFontSizeToFitWidth = true
-        metadata.minimumScaleFactor = 0.72
 
         let spacer = UIView()
         spacer.setContentHuggingPriority(.defaultLow, for: .vertical)

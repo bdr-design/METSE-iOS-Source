@@ -1,192 +1,34 @@
 #pragma once
-
+#include "METSEBallisticsCore.hpp"
 #include "METSECharacterMotor.hpp"
+#include "METSEDamageCore.hpp"
+#include "METSEInputCommandQueue.hpp"
 #include "METSEIntegrityCore.hpp"
 #include "METSEObservatoryCore.hpp"
+#include "METSEVisibilityCore.hpp"
+#include "METSEWeaponCore.hpp"
 #include "METSEWorldCollision.hpp"
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 
 namespace metse {
+struct EngineConfig{double fixedStepSeconds=1.0/60.0;std::uint32_t maxCatchUpSteps=4,maxCombatants=32;CharacterConfig character{};WeaponConfig weapon{};};
+struct EngineSnapshot{double simulationSeconds=0,interpolationAlpha=0,playerX=0,playerY=0,playerZ=0,velocityX=0,velocityY=0,velocityZ=0,playerBodyYaw=0,playerYaw=0,playerPitch=0,cameraHeight=1.64,cameraRoll=0,cameraLean=0,horizontalSpeed=0;std::uint64_t simulationTick=0,shotsFired=0,collisionContacts=0;std::uint32_t activeCombatants=0,ammoInMagazine=30,reserveAmmo=90,activeProjectiles=0;double adsAlpha=0,reloadRemaining=0,recoilPitch=0,recoilYaw=0,weaponSwayX=0,weaponSwayY=0;CharacterStance stance=CharacterStance::Standing;CharacterGait gait=CharacterGait::Idle;bool grounded=true,sprinting=false,reloading=false,weaponObstructed=false;double primaryTargetHealth=100.0;std::uint64_t damageHits=0,damageKills=0;VisibilityReport visibility{};};
+struct BlackBoxFrame{std::uint64_t simulationTick=0;double realDeltaSeconds=0,playerX=0,playerY=0,playerZ=0,horizontalSpeed=0,adsAlpha=0;std::uint32_t queueDepth=0,activeProjectiles=0,catchUpSteps=0;std::uint64_t shotsFired=0,damageHits=0;CharacterStance stance=CharacterStance::Standing;CharacterGait gait=CharacterGait::Idle;bool grounded=true,sprinting=false,reloading=false,catchUpClamped=false;};
+struct EngineDiagnostics{IntegrityMetrics integrity{};Sha256Digest journalHead{},stateHash{};ObservatoryReport observatory{};InputQueueMetrics inputQueue{};BallisticsMetrics ballistics{};VisibilityReport visibility{};std::size_t retainedEvents=0,retainedCommands=0,retainedBlackBoxFrames=0,worldObstacleCount=0,inputQueueDepth=0;std::uint64_t sessionCollisionContacts=0,simulationInvariantRollbacks=0,damageHits=0,damageKills=0;bool journalValid=false,worldValid=false,observatoryValid=false,inputQueueValid=false,weaponValid=false,ballisticsValid=false,damageValid=false,visibilityValid=false;};
 
-struct EngineConfig {
-    double fixedStepSeconds = 1.0 / 60.0;
-    std::uint32_t maxCatchUpSteps = 4;
-    std::uint32_t maxCombatants = 32;
-    CharacterConfig character{};
-};
-
-struct EngineSnapshot {
-    double simulationSeconds = 0.0;
-    std::uint64_t simulationTick = 0;
-    std::uint32_t activeCombatants = 0;
-    double interpolationAlpha = 0.0;
-    double playerX = 0.0;
-    double playerY = 0.0;
-    double playerZ = 0.0;
-    double velocityX = 0.0;
-    double velocityY = 0.0;
-    double velocityZ = 0.0;
-    double playerBodyYaw = 0.0;
-    double playerYaw = 0.0;
-    double playerPitch = 0.0;
-    double cameraHeight = 1.64;
-    double cameraRoll = 0.0;
-    double horizontalSpeed = 0.0;
-    CharacterStance stance = CharacterStance::Standing;
-    CharacterGait gait = CharacterGait::Idle;
-    bool grounded = true;
-    bool sprinting = false;
-    std::uint64_t shotsFired = 0;
-    std::uint64_t collisionContacts = 0;
-};
-
-struct BlackBoxFrame {
-    std::uint64_t simulationTick = 0;
-    double simulationSeconds = 0.0;
-    double realDeltaSeconds = 0.0;
-    double playerX = 0.0;
-    double playerY = 0.0;
-    double playerZ = 0.0;
-    double velocityX = 0.0;
-    double velocityY = 0.0;
-    double velocityZ = 0.0;
-    double playerBodyYaw = 0.0;
-    double playerYaw = 0.0;
-    double playerPitch = 0.0;
-    double cameraHeight = 0.0;
-    double cameraRoll = 0.0;
-    double moveForward = 0.0;
-    double moveStrafe = 0.0;
-    double horizontalSpeed = 0.0;
-    std::uint64_t shotsFired = 0;
-    std::uint32_t catchUpSteps = 0;
-    std::uint32_t collisionContacts = 0;
-    CharacterStance stance = CharacterStance::Standing;
-    CharacterGait gait = CharacterGait::Idle;
-    bool grounded = true;
-    bool sprinting = false;
-    bool catchUpClamped = false;
-};
-
-struct EngineDiagnostics {
-    IntegrityMetrics integrity{};
-    Sha256Digest journalHead{};
-    ObservatoryReport observatory{};
-    std::size_t retainedEvents = 0;
-    std::size_t retainedCommands = 0;
-    std::size_t retainedBlackBoxFrames = 0;
-    std::size_t worldObstacleCount = 0;
-    std::uint64_t sessionCollisionContacts = 0;
-    std::uint64_t simulationInvariantRollbacks = 0;
-    bool journalValid = false;
-    bool worldValid = false;
-    bool observatoryValid = false;
-};
-
-class EngineCore final {
-public:
-    static constexpr std::size_t kBlackBoxCapacity = 720;
-
-    explicit EngineCore(EngineConfig config = {});
-
-    void reset();
-    void advance(double realDeltaSeconds);
-    bool setActiveCombatants(std::uint32_t count);
-    void setMovementInput(double forward, double strafe);
-    void addLookInput(double yawDeltaRadians, double pitchDeltaRadians);
-    void setSprintHeld(bool held);
-    void cycleStance();
-    void triggerFire();
-
-    [[nodiscard]] const EngineSnapshot& snapshot() const noexcept { return state_; }
-    [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
-    [[nodiscard]] EngineDiagnostics diagnostics() const noexcept;
-    [[nodiscard]] bool newestBlackBoxFrame(std::size_t offset, BlackBoxFrame& out) const noexcept;
-    [[nodiscard]] bool newestObservatoryFrame(std::size_t offset, ObservatoryFrame& out) const noexcept { return observatory_.newestFrame(offset, out); }
-    [[nodiscard]] bool newestEvent(std::size_t offset, EventRecord& out) const noexcept { return integrity_.newestEvent(offset, out); }
-    [[nodiscard]] bool newestCommand(std::size_t offset, CommandRecord& out) const noexcept { return integrity_.newestCommand(offset, out); }
-    [[nodiscard]] const std::array<WorldObstacle, WorldCollisionCore::kMaxObstacles>& worldObstacles() const noexcept { return worldCollision_.obstacles(); }
-    [[nodiscard]] std::size_t worldObstacleCount() const noexcept { return worldCollision_.obstacleCount(); }
-    [[nodiscard]] const WorldCollisionCore& worldCollision() const noexcept { return worldCollision_; }
-
+class EngineCore final{
+public:static constexpr std::size_t kBlackBoxCapacity=720;explicit EngineCore(EngineConfig config={});
+void reset();void advance(double realDeltaSeconds);bool setActiveCombatants(std::uint32_t count);
+bool setMovementInput(double forward,double strafe)noexcept{return inputQueue_.pushMove(forward,strafe);}bool addLookInput(double yaw,double pitch)noexcept{return inputQueue_.pushLook(yaw,pitch);}bool setSprintHeld(bool held)noexcept{return inputQueue_.pushSprint(held);}bool setAimHeld(bool held)noexcept{return inputQueue_.pushAim(held);}bool cycleStance()noexcept{return inputQueue_.pushCycleStance();}bool triggerFire()noexcept{return inputQueue_.pushFire();}bool reloadWeapon()noexcept{return inputQueue_.pushReload();}
+[[nodiscard]]const EngineSnapshot& snapshot()const noexcept{return state_;}[[nodiscard]]const EngineConfig& config()const noexcept{return config_;}[[nodiscard]]EngineDiagnostics diagnostics()const noexcept;[[nodiscard]]bool newestBlackBoxFrame(std::size_t offset,BlackBoxFrame&out)const noexcept;[[nodiscard]]const std::array<WorldObstacle,WorldCollisionCore::kMaxObstacles>& worldObstacles()const noexcept{return world_.obstacles();}[[nodiscard]]std::size_t worldObstacleCount()const noexcept{return world_.obstacleCount();}[[nodiscard]]const WorldCollisionCore& worldCollision()const noexcept{return world_;}[[nodiscard]]const std::array<Projectile,BallisticsCore::kMaxProjectiles>& projectiles()const noexcept{return ballistics_.projectiles();}[[nodiscard]]const std::array<DamageTarget,DamageCore::kMaxTargets>& damageTargets()const noexcept{return damage_.targets();}[[nodiscard]]std::size_t damageTargetCount()const noexcept{return damage_.targetCount();}[[nodiscard]]Sha256Digest deterministicStateHash()const noexcept;
 #ifdef METSE_TESTING
-    bool testOnlyExecuteInvariantViolation();
-    void testOnlySetAirborne(double heightMeters, double verticalVelocity) noexcept;
+bool testOnlyExecuteInvariantViolation();void testOnlySetAirborne(double h,double vy)noexcept;
 #endif
-
 private:
-    struct MutationCheckpoint {
-        EngineSnapshot state{};
-        CharacterMotor characterMotor{};
-        double accumulatorSeconds = 0.0;
-        double moveForward = 0.0;
-        double moveStrafe = 0.0;
-        bool sprintHeld = false;
-    };
-
-    template <typename Apply>
-    bool executeAtomic(CommandKind commandKind,
-                       bool precondition,
-                       EventKind domainEvent,
-                       Apply&& apply) {
-        const std::uint64_t commandId = integrity_.admit(commandKind, state_.simulationTick);
-        if (!precondition) {
-            integrity_.reject(commandId, state_.simulationTick);
-            return false;
-        }
-
-        const MutationCheckpoint checkpoint{state_, characterMotor_, accumulatorSeconds_, moveForward_, moveStrafe_, sprintHeld_};
-        apply();
-        syncCharacterSnapshot();
-        if (!validateInvariants()) {
-            state_ = checkpoint.state;
-            characterMotor_ = checkpoint.characterMotor;
-            accumulatorSeconds_ = checkpoint.accumulatorSeconds;
-            moveForward_ = checkpoint.moveForward;
-            moveStrafe_ = checkpoint.moveStrafe;
-            sprintHeld_ = checkpoint.sprintHeld;
-            integrity_.rollback(commandId, state_.simulationTick);
-            return false;
-        }
-
-        integrity_.commit(commandId, state_.simulationTick);
-        integrity_.appendDomainEvent(domainEvent, commandId, state_.simulationTick);
-        return true;
-    }
-
-    void resetState() noexcept;
-    void fixedStep() noexcept;
-    void syncCharacterSnapshot() noexcept;
-    bool validateInvariants() const noexcept;
-    void recordBlackBox(double realDeltaSeconds,
-                        std::uint32_t catchUpSteps,
-                        bool catchUpClamped,
-                        std::uint32_t collisionContacts) noexcept;
-    void observeFrame(double realDeltaSeconds,
-                      std::uint32_t catchUpSteps,
-                      bool catchUpClamped,
-                      std::uint32_t collisionContacts) noexcept;
-
-    EngineConfig config_{};
-    EngineSnapshot state_{};
-    CharacterMotor characterMotor_{};
-    WorldCollisionCore worldCollision_{};
-    ObservatoryCore observatory_{};
-    double accumulatorSeconds_ = 0.0;
-    double moveForward_ = 0.0;
-    double moveStrafe_ = 0.0;
-    bool sprintHeld_ = false;
-    IntegrityCore integrity_{};
-    std::array<BlackBoxFrame, kBlackBoxCapacity> blackBox_{};
-    std::size_t blackBoxWrite_ = 0;
-    std::size_t blackBoxCount_ = 0;
-    std::uint64_t sessionCollisionContacts_ = 0;
-    std::uint64_t simulationInvariantRollbacks_ = 0;
-    std::uint32_t frameCollisionContacts_ = 0;
-};
-
+struct MutationCheckpoint{EngineSnapshot state{};CharacterMotor character{};WeaponCore weapon{};BallisticsCore ballistics{};DamageCore damage{};VisibilityCore visibility{};double accumulator=0,moveForward=0,moveStrafe=0;bool sprintHeld=false;};
+template<class Apply>bool executeAtomic(CommandKind kind,bool precondition,EventKind event,Apply&&apply){std::uint64_t commandId=integrity_.admit(kind,state_.simulationTick);if(!precondition){integrity_.reject(commandId,state_.simulationTick);return false;}MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,accumulatorSeconds_,moveForward_,moveStrafe_,sprintHeld_};bool applied=apply(commandId);syncSnapshot();if(!applied||!validateInvariants()){state_=cp.state;character_=cp.character;weapon_=cp.weapon;ballistics_=cp.ballistics;damage_=cp.damage;visibility_=cp.visibility;accumulatorSeconds_=cp.accumulator;moveForward_=cp.moveForward;moveStrafe_=cp.moveStrafe;sprintHeld_=cp.sprintHeld;integrity_.rollback(commandId,state_.simulationTick);return false;}integrity_.commit(commandId,state_.simulationTick);integrity_.appendDomainEvent(event,commandId,state_.simulationTick);return true;}
+void resetState()noexcept;void drainInputQueue()noexcept;void applyDiscrete(const InputCommand&cmd)noexcept;void fixedStep()noexcept;void updateWeaponObstruction()noexcept;void syncSnapshot()noexcept;bool validateInvariants()const noexcept;void recordBlackBox(double dt,std::uint32_t steps,bool clamped)noexcept;void observeFrame(double dt,std::uint32_t steps,bool clamped)noexcept;Vec3 cameraPosition()const noexcept;
+EngineConfig config_{};EngineSnapshot state_{};CharacterMotor character_{};WeaponCore weapon_{};WorldCollisionCore world_{};BallisticsCore ballistics_{};DamageCore damage_{};VisibilityCore visibility_{};ObservatoryCore observatory_{};InputCommandQueue inputQueue_{};IntegrityCore integrity_{};double accumulatorSeconds_=0,moveForward_=0,moveStrafe_=0;bool sprintHeld_=false;std::array<BlackBoxFrame,kBlackBoxCapacity>blackBox_{};std::size_t blackBoxWrite_=0,blackBoxCount_=0;std::uint64_t sessionCollisionContacts_=0,simulationInvariantRollbacks_=0,lastDamageResultSequence_=0;std::uint32_t frameCollisionContacts_=0;};
 } // namespace metse

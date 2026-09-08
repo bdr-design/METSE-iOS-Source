@@ -1,6 +1,5 @@
 #import <Foundation/Foundation.h>
 #import <MetalKit/MetalKit.h>
-
 NS_ASSUME_NONNULL_BEGIN
 @interface METSEEngineBridge : NSObject <MTKViewDelegate>
 - (instancetype)initWithView:(MTKView *)view NS_DESIGNATED_INITIALIZER;
@@ -10,8 +9,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setMoveForward:(float)forward strafe:(float)strafe;
 - (void)addLookYaw:(float)yaw pitch:(float)pitch;
 - (void)setSprintHeld:(BOOL)held;
+- (void)setAimHeld:(BOOL)held;
 - (void)cycleStance;
 - (void)triggerFire;
+- (void)reloadWeapon;
 - (NSString *)statusString;
 - (NSDictionary<NSString *, id> *)observatorySnapshot;
 - (NSString *)observatoryReportText;

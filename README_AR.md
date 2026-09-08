@@ -1,25 +1,18 @@
 # METSE — Middle East Tactical Simulation Engine
 
-لعبة تكتيكية Native على iPhone مبنية على C++ مستقل + Objective-C++ bridge + Metal مباشر.
+Native iPhone tactical engine: Swift/UIKit shell → Objective-C++ adapter → portable C++20 simulation → Metal renderer.
 
-## Baseline الحالي
-- Version: 0.2.0
-- Build: 007
-- iPhone / Landscape / Native Metal
+## الحالة الحالية
+- Version 0.3.0
+- Build 008 — Mega Combat Foundation
 - 32 combatants max
-- Runtime Integrity Control Plane
-- Character Motor + gait model + camera feel
-- World Collision Foundation
-- In-game Observatory Center
-- Black Box 720 frames
-- Observatory frame window 600 frames
+- Single simulation ownership + bounded input queue
+- Character/3D collision + camera feel
+- Weapon/ADS/recoil/reload/obstruction
+- Ballistics/projectiles/material impact
+- Anatomical damage foundation
+- Visibility/Culling budgets
+- Observatory V2 + Black Box + SHA journal + deterministic state hash
+- Thermal presentation fallback 60→30 مع بقاء simulation fixed-step 60Hz
 
-## حدود الملكية
-- C++ هو مصدر حقيقة الـsimulation والـworld collision.
-- Swift مسؤول عن واجهة iOS والإدخال والعرض التشخيصي، ولا يملك gameplay state.
-- Metal يستهلك snapshots وworld footprints ولا يقرر منطق اللعب.
-- مركز الأرصاد read-only على حالة اللعب ويصدر تقريراً تقنياً للمراجعة.
-- Content/Data منفصل عن الكود الأصلي.
-
-## سياسة الإصدارات
-من Build 007 فصاعداً نفضل حزم تطوير كبيرة مترابطة بدلاً من IPA جديد لكل تعديل صغير. لا يصدر IPA إلا بعد نجاح integrity + guardrails + C++ tests + Swift parse + Xcode iPhoneOS build + package validation.
+لا توجد تبعية WebView أو Unity/Unreal داخل Runtime اللعبة.

@@ -21,6 +21,7 @@ enum class CommandKind : std::uint8_t {
     SetMovementIntent,
     AddLookIntent,
     FireWeapon,
+    ReloadWeapon,
     SetSprintIntent,
     CycleStance
 };
@@ -43,6 +44,10 @@ enum class EventKind : std::uint8_t {
     MovementIntentChanged,
     LookIntentChanged,
     ShotFired,
+    ReloadStarted,
+    ReloadCompleted,
+    DamageApplied,
+    TargetKilled,
     SprintIntentChanged,
     StanceChanged,
     SimulationInvariantRolledBack
@@ -98,6 +103,7 @@ public:
                            std::uint64_t simulationTick) noexcept;
 
     void appendSystemEvent(EventKind kind, std::uint64_t simulationTick) noexcept;
+    void appendCorrelatedSystemEvent(EventKind kind, std::uint64_t correlationId, std::uint64_t simulationTick) noexcept { appendEvent(kind, 0, correlationId, 0, simulationTick); }
 
     [[nodiscard]] const IntegrityMetrics& metrics() const noexcept { return metrics_; }
     [[nodiscard]] const Sha256Digest& journalHead() const noexcept { return journalHead_; }

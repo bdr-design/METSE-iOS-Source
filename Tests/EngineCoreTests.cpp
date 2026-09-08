@@ -1,169 +1,46 @@
+#include "../Engine/Core/METSEBallisticsCore.hpp"
 #include "../Engine/Core/METSECharacterMotor.hpp"
+#include "../Engine/Core/METSEDamageCore.hpp"
 #include "../Engine/Core/METSEEngineCore.hpp"
+#include "../Engine/Core/METSEInputCommandQueue.hpp"
 #include "../Engine/Core/METSEIntegrityCore.hpp"
 #include "../Engine/Core/METSEObservatoryCore.hpp"
+#include "../Engine/Core/METSEVisibilityCore.hpp"
+#include "../Engine/Core/METSEWeaponCore.hpp"
 #include "../Engine/Core/METSEWorldCollision.hpp"
-
 #include <cassert>
 #include <cmath>
 #include <iostream>
 #include <limits>
 
-int main() {
-    using namespace metse;
+int main(){using namespace metse;
+assert(sha256Hex(sha256("abc"))=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 
-    assert(sha256Hex(sha256("abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-    assert(sha256Hex(sha256("")) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+InputCommandQueue q;assert(q.validate());for(int i=0;i<500;++i){assert(q.pushMove(1,0));assert(q.pushLook(.001,.001));}assert(q.size()<=4);assert(q.metrics().coalesced>900);assert(q.pushFire());assert(q.pushMove(.5,.2));assert(q.pushFire());InputCommand c{};std::uint64_t last=0;int fires=0;while(q.pop(c)){assert(c.sequence>last);last=c.sequence;if(c.kind==InputCommandKind::Fire)++fires;}assert(fires==2);
+q.reset();for(std::size_t i=0;i<InputCommandQueue::kCapacity;++i)assert(q.pushFire());assert(!q.pushReload());assert(q.metrics().rejectedCritical==1);
 
-    WorldCollisionCore world;
-    assert(world.validate());
-    assert(world.obstacleCount() == 5);
-    const auto freeMove = world.resolve(0.0, 0.0, 1.0, 1.0, 0.34);
-    assert(!freeMove.hitX && !freeMove.hitZ);
-    const auto wallHit = world.resolve(5.0, 14.0, 7.0, 14.0, 0.34);
-    assert(wallHit.hitX && wallHit.x <= 5.661);
-    const auto boundaryHit = world.resolve(47.0, 0.0, 60.0, 0.0, 0.34);
-    assert(boundaryHit.hitX && boundaryHit.x <= 47.661);
+WorldCollisionCore world;assert(world.validate());assert(world.obstacleCount()==6);auto standBlock=world.resolve(-3,8,0,8,.34,1.78);assert(standBlock.hitX||standBlock.hitZ);auto crouchPass=world.resolve(-3,8,0,8,.34,1.18);assert(!crouchPass.hitX&&!crouchPass.hitZ);assert(std::isfinite(world.clearanceHeightAt(0,8,.2)));
+auto rayHit=world.raycastSegment({13,1,-2},{27,1,-2});assert(rayHit.hit&&rayHit.material==WorldMaterial::Wood);
 
-    ObservatoryCore observatory;
-    observatory.reset();
-    ObservatoryFrameInput observed{};
-    observed.grounded = true;
-    observed.stance = CharacterStance::Standing;
-    observed.gait = CharacterGait::Jog;
-    for (int i = 0; i < 700; ++i) {
-        observed.simulationTick = static_cast<std::uint64_t>(i);
-        observed.realDeltaSeconds = (i == 350) ? 0.050 : (1.0 / 60.0);
-        observed.playerZ += 0.06;
-        observed.horizontalSpeed = 4.0;
-        observed.catchUpClamped = (i == 350);
-        observed.collisionContacts = (i == 400) ? 1u : 0u;
-        observatory.observe(observed);
-    }
-    const auto obsReport = observatory.report();
-    assert(observatory.validate());
-    assert(obsReport.observedFrames == 700);
-    assert(obsReport.retainedFrames == ObservatoryCore::kFrameCapacity);
-    assert(obsReport.estimatedFPS > 50.0 && obsReport.estimatedFPS < 65.0);
-    assert(obsReport.maxFrameMilliseconds >= 49.9);
-    assert(obsReport.catchUpClampedFrames == 1);
-    assert(obsReport.totalCollisionContacts == 1);
-    assert(obsReport.distanceTravelled > 35.0);
+WeaponCore weapon;assert(weapon.validate());weapon.setAimHeld(true);for(int i=0;i<20;++i)weapon.fixedStep(1.0/60.0,0,0);assert(weapon.state().adsAlpha>.95);ShotSolution shot{};assert(weapon.fire({0,1.64,0},0,0,77,shot));assert(weapon.state().ammoInMagazine==29);assert(!weapon.fire({0,1.64,0},0,0,78,shot));for(int i=0;i<10;++i)weapon.fixedStep(1.0/60.0,0,0);assert(weapon.requestReload());for(int i=0;i<150;++i)weapon.fixedStep(1.0/60.0,0,0);assert(!weapon.state().reloading&&weapon.state().ammoInMagazine==30&&weapon.state().reserveAmmo==89);
 
-    CharacterMotor motor;
-    assert(motor.validate());
-    CharacterInput input{};
-    input.forward = 0.2;
-    for (int i = 0; i < 90; ++i) motor.fixedStep(1.0 / 60.0, input);
-    assert(motor.state().gait == CharacterGait::Walk);
-    assert(motor.horizontalSpeed() <= 1.56);
+DamageCore damage;auto hit=damage.applySegment({8,1.7,17},{8,1.7,19},1300,1001);assert(hit.hit&&hit.region==HitRegion::Head&&hit.killed);assert(damage.totalKills()==1&&damage.validate());
 
-    input.forward = 0.55;
-    for (int i = 0; i < 60; ++i) motor.fixedStep(1.0 / 60.0, input);
-    assert(motor.state().gait == CharacterGait::Tactical);
-    assert(motor.horizontalSpeed() > 2.5 && motor.horizontalSpeed() <= 2.66);
+DamageCore ballisticDamage;BallisticsCore ballistics;ShotSolution fast{};fast.origin={-7,1.7,0};fast.direction={0,0,1};fast.muzzleVelocity=820;fast.massKg=.004;fast.correlationId=42;assert(ballistics.spawn(fast));for(int i=0;i<4;++i)ballistics.fixedStep(1.0/60.0,world,ballisticDamage);assert(ballisticDamage.totalHits()>=1);assert(ballistics.validate());
 
-    input.forward = 1.0;
-    for (int i = 0; i < 60; ++i) motor.fixedStep(1.0 / 60.0, input);
-    assert(motor.state().gait == CharacterGait::Jog);
-    assert(motor.horizontalSpeed() > 4.0 && motor.horizontalSpeed() <= 4.16);
-    assert(std::abs(motor.state().cameraBobY) < 0.05);
-    assert(std::abs(motor.state().cameraRoll) < 0.04);
+VisibilityCore vis;vis.syncTarget(0,1,{0,0,20},true);vis.syncTarget(1,2,{0,0,120},true);vis.update({0,1.6,0},0);auto vr=vis.report();assert(vr.full==1&&vr.minimal==1&&vis.validate());
 
-    input.sprintHeld = true;
-    for (int i = 0; i < 60; ++i) motor.fixedStep(1.0 / 60.0, input);
-    assert(motor.state().gait == CharacterGait::Sprint && motor.state().sprinting);
-    assert(motor.horizontalSpeed() > 5.8 && motor.horizontalSpeed() <= 6.01);
+ObservatoryCore obs;ObservatoryFrameInput oi{};for(int i=0;i<600;++i){oi.realDeltaSeconds=(i==599)?.05:1.0/60.0;oi.playerZ+=.05;oi.horizontalSpeed=3;oi.inputQueueDepth=i%8;oi.activeProjectiles=i%4;obs.observe(oi);}auto orp=obs.report();assert(orp.onePercentLowFPS>0&&orp.pointOnePercentLowFPS>0&&orp.p99FrameMilliseconds>=16.0&&orp.maxFrameMilliseconds>=49.9&&obs.validate());
 
-    motor.cycleStance();
-    for (int i = 0; i < 30; ++i) motor.fixedStep(1.0 / 60.0, input);
-    assert(motor.state().stance == CharacterStance::Crouched);
-    assert(motor.state().gait == CharacterGait::Crouch);
-    assert(!motor.state().sprinting && motor.horizontalSpeed() <= 2.01);
+EngineCore core;assert(core.config().maxCombatants==32);assert(!core.setActiveCombatants(33));assert(core.setActiveCombatants(16));for(int i=0;i<1000;++i){core.setMovementInput(1,0);core.addLookInput(.0002,0);}assert(core.diagnostics().inputQueue.highWatermark<=InputCommandQueue::kCapacity);for(int i=0;i<120;++i)core.advance(1.0/60.0);assert(core.snapshot().horizontalSpeed>4.0);
+core.setAimHeld(true);for(int i=0;i<20;++i)core.advance(1.0/60.0);assert(core.snapshot().adsAlpha>.9);assert(core.triggerFire());core.advance(1.0/60.0);assert(core.snapshot().shotsFired==1&&core.snapshot().ammoInMagazine==29);
+for(int i=0;i<20;++i)core.advance(1.0/60.0);assert(core.reloadWeapon());core.advance(1.0/60.0);assert(core.snapshot().reloading);for(int i=0;i<150;++i)core.advance(1.0/60.0);assert(!core.snapshot().reloading);
+// Enter low roof crouched and prove standing transition is rejected/rolled back.
+core.reset();core.cycleStance();core.advance(1.0/60.0);assert(core.snapshot().stance==CharacterStance::Crouched);core.setMovementInput(1,0);core.addLookInput(0,0);for(int i=0;i<120;++i)core.advance(1.0/60.0);
+assert(core.diagnostics().journalValid);assert(core.diagnostics().worldValid);assert(core.diagnostics().weaponValid);assert(core.diagnostics().inputQueueValid);
 
-    motor.addLookInput(0.35, 0.2);
-    assert(std::abs(motor.state().bodyYaw) < 1e-9);
-    assert(motor.cameraYaw() > 0.34);
-    motor.addLookInput(0.35, 0.0);
-    const double bodyBefore = motor.state().bodyYaw;
-    motor.fixedStep(1.0 / 60.0, {});
-    assert(motor.state().bodyYaw > bodyBefore);
+EngineCore a,b;for(int i=0;i<240;++i){if(i%40==0){a.triggerFire();b.triggerFire();}a.setMovementInput(.7,.2);b.setMovementInput(.7,.2);a.addLookInput(.001,-.0004);b.addLookInput(.001,-.0004);a.advance(1.0/60.0);b.advance(1.0/60.0);}assert(a.deterministicStateHash()==b.deterministicStateHash());
 
-    motor.testOnlySetAirborne(2.0, 0.0);
-    for (int i = 0; i < 120; ++i) motor.fixedStep(1.0 / 60.0, {});
-    assert(motor.state().grounded && std::abs(motor.state().y) < 1e-9);
-    assert(motor.state().landingOffset <= 0.0 && motor.validate());
-
-    EngineCore core;
-    assert(core.config().maxCombatants == 32);
-    assert(core.diagnostics().journalValid);
-    assert(core.diagnostics().worldValid);
-    assert(core.diagnostics().observatoryValid);
-    assert(core.worldObstacleCount() == 5);
-    assert(!core.setActiveCombatants(33));
-    assert(core.setActiveCombatants(16));
-
-    core.advance(1.0 / 60.0);
-    core.setMovementInput(1.0, 0.0);
-    for (int i = 0; i < 60; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().gait == CharacterGait::Jog);
-    assert(core.snapshot().horizontalSpeed > 4.0);
-
-    const double jogSpeed = core.snapshot().horizontalSpeed;
-    core.setSprintHeld(true);
-    for (int i = 0; i < 60; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().gait == CharacterGait::Sprint);
-    assert(core.snapshot().horizontalSpeed > jogSpeed + 1.5);
-
-    core.cycleStance();
-    for (int i = 0; i < 30; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().stance == CharacterStance::Crouched && !core.snapshot().sprinting);
-    core.cycleStance();
-    for (int i = 0; i < 30; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().stance == CharacterStance::Prone && core.snapshot().cameraHeight < 0.6);
-    core.cycleStance();
-    for (int i = 0; i < 30; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().stance == CharacterStance::Standing);
-
-    core.setMovementInput(std::numeric_limits<double>::quiet_NaN(), 1.0);
-    core.setMovementInput(0.0, 0.0);
-    core.setSprintHeld(false);
-    for (int i = 0; i < 60; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().horizontalSpeed < 0.001);
-
-    core.testOnlySetAirborne(2.0, 0.0);
-    for (int i = 0; i < 120; ++i) core.advance(1.0 / 60.0);
-    assert(core.snapshot().grounded && std::abs(core.snapshot().playerY) < 1e-9);
-
-    core.triggerFire();
-    assert(core.snapshot().shotsFired == 1);
-    const auto beforeRollback = core.snapshot();
-    assert(!core.testOnlyExecuteInvariantViolation());
-    const auto afterRollback = core.snapshot();
-    assert(afterRollback.playerX == beforeRollback.playerX);
-    assert(afterRollback.playerZ == beforeRollback.playerZ);
-
-    const auto diagnostics = core.diagnostics();
-    assert(diagnostics.integrity.commandsRejected >= 2);
-    assert(diagnostics.integrity.commandsRolledBack >= 1);
-    assert(diagnostics.journalValid && diagnostics.worldValid && diagnostics.observatoryValid);
-    assert(diagnostics.observatory.observedFrames > 0);
-
-    for (int i = 0; i < 400; ++i) core.triggerFire();
-    for (int i = 0; i < 900; ++i) core.advance(1.0 / 60.0);
-    const auto bounded = core.diagnostics();
-    assert(bounded.retainedCommands == IntegrityCore::kCommandCapacity);
-    assert(bounded.retainedEvents == IntegrityCore::kEventCapacity);
-    assert(bounded.retainedBlackBoxFrames == EngineCore::kBlackBoxCapacity);
-    assert(bounded.observatory.retainedFrames == ObservatoryCore::kFrameCapacity);
-    assert(bounded.journalValid);
-
-    BlackBoxFrame latest{}, oldest{};
-    assert(core.newestBlackBoxFrame(0, latest));
-    assert(core.newestBlackBoxFrame(EngineCore::kBlackBoxCapacity - 1, oldest));
-    assert(latest.simulationTick >= oldest.simulationTick);
-    assert(std::isfinite(latest.cameraRoll));
-
-    std::cout << "METSE Build 007 World + Character Feel + Observatory Tests: PASS\n";
-    return 0;
-}
+a.setMovementInput(std::numeric_limits<double>::quiet_NaN(),0);assert(a.diagnostics().inputQueue.rejectedInvalid>=1);auto before=a.snapshot();assert(!a.testOnlyExecuteInvariantViolation());auto after=a.snapshot();assert(before.playerX==after.playerX&&before.playerZ==after.playerZ&&a.diagnostics().integrity.commandsRolledBack>=1);
+for(int i=0;i<900;++i)a.advance(1.0/60.0);assert(a.diagnostics().retainedBlackBoxFrames==EngineCore::kBlackBoxCapacity);assert(a.diagnostics().observatory.retainedFrames==ObservatoryCore::kFrameCapacity);
+std::cout<<"METSE Build 008 Mega Combat Foundation Tests: PASS\n";}

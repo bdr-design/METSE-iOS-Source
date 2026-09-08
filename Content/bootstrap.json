@@ -1,7 +1,7 @@
 {
   "contentSchema": 1,
-  "contentVersion": "0.2.0-dev.1",
-  "sequence": 2,
+  "contentVersion": "0.3.0-dev.1",
+  "sequence": 3,
   "channel": "development",
   "updateManifestURL": "",
   "trustedUpdateHosts": [],
@@ -15,11 +15,21 @@
     "enabled": true,
     "frameWindow": 600,
     "blackBoxFrames": 720,
-    "exportReport": true
+    "exportReport": true,
+    "percentileMetrics": true,
+    "inputQueueTelemetry": true
   },
   "worldCollision": {
-    "schema": 1,
+    "schema": 2,
     "trainingWorldHalfExtentMeters": 48,
-    "characterCapsuleRadiusMeters": 0.34
+    "characterCapsuleRadiusMeters": 0.34,
+    "verticalClearance": true,
+    "materialRaycast": true
+  },
+  "combatFoundation": {
+    "weaponDomain": true,
+    "ballisticsCapacity": 128,
+    "damageTargetsMax": 32,
+    "visibilityEntitiesMax": 32
   }
 }

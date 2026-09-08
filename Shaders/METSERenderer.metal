@@ -1,141 +1,21 @@
 #include <metal_stdlib>
 using namespace metal;
-
-constant uint kMaxObstacles = 6;
-
-struct VSOut {
-    float4 position [[position]];
-};
-
-struct Uniforms {
-    float4 timing;
-    float4 camera;
-    float4 state;
-    float4 character;
-    float4 worldMeta;
-    float4 worldExtra;
-    float4 obstacles[kMaxObstacles];
-    float4 obstacleHeightsA;
-    float4 obstacleHeightsB;
-};
-
-vertex VSOut metseVertex(uint vertexID [[vertex_id]]) {
-    float2 positions[3] = { float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0) };
-    VSOut out;
-    out.position = float4(positions[vertexID], 0.0, 1.0);
-    return out;
-}
-
-float gridLine(float2 point) {
-    float2 grid = abs(fract(point) - 0.5) / max(fwidth(point), float2(0.0001));
-    return 1.0 - min(min(grid.x, grid.y), 1.0);
-}
-
-float obstacleHeight(constant Uniforms& uniforms, uint index) {
-    if (index < 4) return uniforms.obstacleHeightsA[index];
-    return uniforms.obstacleHeightsB[index - 4];
-}
-
-float rayBoxDistance(float3 rayOrigin, float3 rayDirection, float4 footprint, float height) {
-    float3 boxMin = float3(footprint.x, 0.0, footprint.y);
-    float3 boxMax = float3(footprint.z, height, footprint.w);
-    float3 safeDirection = select(rayDirection,
-                                  copysign(float3(0.00001), rayDirection),
-                                  abs(rayDirection) < float3(0.00001));
-    float3 inverseDirection = 1.0 / safeDirection;
-    float3 t0 = (boxMin - rayOrigin) * inverseDirection;
-    float3 t1 = (boxMax - rayOrigin) * inverseDirection;
-    float3 tSmall = min(t0, t1);
-    float3 tBig = max(t0, t1);
-    float nearT = max(max(tSmall.x, tSmall.y), tSmall.z);
-    float farT = min(min(tBig.x, tBig.y), tBig.z);
-    if (farT < max(nearT, 0.0)) return 1.0e20;
-    return nearT > 0.0 ? nearT : farT;
-}
-
-fragment float4 metseFragment(VSOut in [[stage_in]], constant Uniforms& uniforms [[buffer(0)]]) {
-    float2 resolution = max(uniforms.timing.yz, float2(1.0));
-    float2 screenUV = (in.position.xy / resolution) * 2.0 - 1.0;
-    screenUV.y = -screenUV.y;
-
-    float roll = uniforms.worldExtra.y;
-    float cosineRoll = cos(roll);
-    float sineRoll = sin(roll);
-    screenUV = float2(cosineRoll * screenUV.x - sineRoll * screenUV.y,
-                      sineRoll * screenUV.x + cosineRoll * screenUV.y);
-
-    float aspect = resolution.x / resolution.y;
-    float2 viewUV = screenUV;
-    viewUV.x *= aspect;
-
-    float yaw = uniforms.camera.z;
-    float pitch = uniforms.camera.w;
-    float sineYaw = sin(yaw);
-    float cosineYaw = cos(yaw);
-    float3 forward = normalize(float3(sineYaw, 0.0, cosineYaw));
-    float3 right = float3(cosineYaw, 0.0, -sineYaw);
-    float3 up = float3(0.0, 1.0, 0.0);
-    float3 ray = normalize(forward + right * (viewUV.x * 0.72) + up * ((viewUV.y + pitch * 0.72) * 0.58));
-    float3 camera = float3(uniforms.camera.x, uniforms.character.x + uniforms.character.y, uniforms.camera.y);
-
-    float3 color = float3(0.018, 0.032, 0.034) + max(ray.y, 0.0) * float3(0.018, 0.038, 0.040);
-    float groundDistance = ray.y < -0.015 ? -camera.y / ray.y : 1.0e20;
-
-    float nearestObstacle = 1.0e20;
-    uint nearestIndex = 0;
-    uint obstacleCount = min((uint)round(uniforms.worldMeta.x), kMaxObstacles);
-    for (uint i = 0; i < obstacleCount; ++i) {
-        float hit = rayBoxDistance(camera, ray, uniforms.obstacles[i], obstacleHeight(uniforms, i));
-        if (hit > 0.0 && hit < nearestObstacle) {
-            nearestObstacle = hit;
-            nearestIndex = i;
-        }
-    }
-
-    if (groundDistance < nearestObstacle && groundDistance < 1.0e19) {
-        float3 world = camera + ray * groundDistance;
-        float fade = exp(-groundDistance * 0.026);
-        float major = gridLine(world.xz * 0.10);
-        float minor = gridLine(world.xz * 0.50) * 0.30;
-        float3 ground = float3(0.040, 0.055, 0.048);
-        ground += (major + minor) * float3(0.08, 0.18, 0.13) * fade;
-
-        float minX = uniforms.worldMeta.y;
-        float maxX = uniforms.worldMeta.z;
-        float minZ = uniforms.worldMeta.w;
-        float maxZ = uniforms.worldExtra.x;
-        float boundary = max(1.0 - smoothstep(0.06, 0.14, min(abs(world.x - minX), abs(world.x - maxX))),
-                             1.0 - smoothstep(0.06, 0.14, min(abs(world.z - minZ), abs(world.z - maxZ))));
-        ground = mix(ground, float3(0.55, 0.42, 0.12), boundary * fade * 0.72);
-        color = mix(color, ground, fade);
-    } else if (nearestObstacle < 1.0e19) {
-        float3 hitPoint = camera + ray * nearestObstacle;
-        float height = max(obstacleHeight(uniforms, nearestIndex), 0.1);
-        float vertical = clamp(hitPoint.y / height, 0.0, 1.0);
-        float distanceFade = exp(-nearestObstacle * 0.018);
-        float3 wallBase = float3(0.105, 0.125, 0.115);
-        float3 wallTop = float3(0.16, 0.19, 0.17);
-        color = mix(wallBase, wallTop, vertical) * (0.55 + 0.45 * distanceFade);
-        float grid = gridLine(hitPoint.xz * 0.40) * 0.10;
-        color += grid * float3(0.08, 0.16, 0.12);
-    }
-
-    float2 targetWorld = float2(8.0, 18.0);
-    float2 relative = targetWorld - uniforms.camera.xy;
-    float forwardDistance = dot(relative, float2(sineYaw, cosineYaw));
-    float sideDistance = dot(relative, float2(cosineYaw, -sineYaw));
-    if (forwardDistance > 1.0) {
-        float targetX = (sideDistance / forwardDistance) / (0.72 * aspect);
-        float targetY = (-0.12 / forwardDistance - pitch * 0.72) / 0.58;
-        float2 delta = float2(screenUV.x, screenUV.y) - float2(targetX, targetY);
-        float marker = smoothstep(0.035, 0.012, length(delta));
-        color = mix(color, float3(0.94, 0.29, 0.12), marker);
-    }
-
-    float crossHorizontal = (1.0 - smoothstep(0.0025, 0.0065, abs(screenUV.x))) * step(abs(screenUV.y), 0.025);
-    float crossVertical = (1.0 - smoothstep(0.0025, 0.0065, abs(screenUV.y))) * step(abs(screenUV.x), 0.025);
-    color = mix(color, float3(0.76, 0.90, 0.82), clamp(crossHorizontal + crossVertical, 0.0, 1.0) * 0.7);
-
-    color += uniforms.timing.w * float3(0.35, 0.22, 0.08) * smoothstep(0.9, 0.0, length(viewUV - float2(0.28, -0.55)));
-    return float4(color, 1.0);
-}
+constant uint kMaxObstacles=8;
+constant uint kMaxProjectiles=8;
+constant uint kMaxTargets=4;
+struct VSOut{float4 position[[position]];};
+struct Uniforms{float4 timing;float4 camera;float4 character;float4 weapon;float4 weapon2;float4 worldMeta;float4 worldExtra;float4 obstacleBounds[kMaxObstacles];float4 obstacleMeta[kMaxObstacles];float4 projectilePositions[kMaxProjectiles];float4 targetData[kMaxTargets];};
+vertex VSOut metseVertex(uint id[[vertex_id]]){float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};VSOut o;o.position=float4(p[id],0,1);return o;}
+float gridLine(float2 p){float2 g=abs(fract(p)-.5)/max(fwidth(p),float2(.0001));return 1.0-min(min(g.x,g.y),1.0);}
+float rayBox(float3 ro,float3 rd,float4 footprint,float2 yBounds){float3 mn=float3(footprint.x,yBounds.x,footprint.y),mx=float3(footprint.z,yBounds.y,footprint.w);float3 safe=select(rd,copysign(float3(.00001),rd),abs(rd)<float3(.00001));float3 inv=1.0/safe;float3 a=(mn-ro)*inv,b=(mx-ro)*inv,sm=min(a,b),bg=max(a,b);float nearT=max(max(sm.x,sm.y),sm.z),farT=min(min(bg.x,bg.y),bg.z);if(farT<max(nearT,0.0))return 1e20;return nearT>0?nearT:farT;}
+float sdBox(float2 p,float2 b){float2 d=abs(p)-b;return length(max(d,0.0))+min(max(d.x,d.y),0.0);}
+float2 projectWorld(float3 world,float3 camera,float3 forward,float3 right,float aspect,float pitch,float ads,out float forwardDistance){float3 rel=world-camera;forwardDistance=dot(rel,forward);float side=dot(rel,right);if(forwardDistance<=.05)return float2(99);float vertical=rel.y;float fovX=mix(.72,.52,ads);return float2((side/forwardDistance)/(fovX*aspect),(vertical/forwardDistance-pitch*.72)/.58);}
+fragment float4 metseFragment(VSOut in[[stage_in]],constant Uniforms&u[[buffer(0)]]){
+float2 res=max(u.timing.yz,float2(1));float2 suv=(in.position.xy/res)*2-1;suv.y=-suv.y;float roll=u.character.w+u.worldExtra.w;float cr=cos(roll),sr=sin(roll);suv=float2(cr*suv.x-sr*suv.y,sr*suv.x+cr*suv.y);float aspect=res.x/res.y;float2 v=suv;v.x*=aspect;float yaw=u.camera.z,pitch=u.camera.w;float sy=sin(yaw),cy=cos(yaw),ads=clamp(u.weapon.x,0.0,1.0);float3 forward=normalize(float3(sy,0,cy)),right=float3(cy,0,-sy),up=float3(0,1,0);float fovX=mix(.72,.52,ads);float3 ray=normalize(forward+right*(v.x*fovX)+up*((v.y+pitch*.72)*.58));float3 camera=float3(u.camera.x,u.character.x+u.character.y,u.camera.y);
+float3 color=float3(.018,.032,.034)+max(ray.y,0.0)*float3(.018,.038,.04);float groundT=ray.y<-.015?-camera.y/ray.y:1e20;float nearest=1e20;uint nearestIdx=0;uint count=min((uint)round(u.worldMeta.x),kMaxObstacles);for(uint i=0;i<count;++i){float hit=rayBox(camera,ray,u.obstacleBounds[i],u.obstacleMeta[i].xy);if(hit>0&&hit<nearest){nearest=hit;nearestIdx=i;}}
+if(groundT<nearest&&groundT<1e19){float3 w=camera+ray*groundT;float fade=exp(-groundT*.026);float major=gridLine(w.xz*.10),minor=gridLine(w.xz*.50)*.30;float3 g=float3(.04,.055,.048)+(major+minor)*float3(.08,.18,.13)*fade;float boundary=max(1.0-smoothstep(.06,.14,min(abs(w.x-u.worldMeta.y),abs(w.x-u.worldMeta.z))),1.0-smoothstep(.06,.14,min(abs(w.z-u.worldMeta.w),abs(w.z-u.worldExtra.x))));g=mix(g,float3(.55,.42,.12),boundary*fade*.72);color=mix(color,g,fade);}else if(nearest<1e19){float3 hp=camera+ray*nearest;float2 yb=u.obstacleMeta[nearestIdx].xy;float vertical=clamp((hp.y-yb.x)/max(.1,yb.y-yb.x),0.0,1.0);float material=u.obstacleMeta[nearestIdx].z;float3 base=material<.5?float3(.11,.13,.12):(material<1.5?float3(.12,.14,.16):float3(.16,.11,.07));color=mix(base,base*1.35,vertical)*(0.55+0.45*exp(-nearest*.018));}
+uint targetCount=min((uint)round(u.worldExtra.y),kMaxTargets);for(uint i=0;i<targetCount;++i){float4 td=u.targetData[i];if(td.w<.5)continue;float fd=0;float2 base=projectWorld(float3(td.x,0,td.y),camera,forward,right,aspect,pitch,ads,fd);if(fd<=1||base.x>2)continue;float scale=clamp(1.7/fd,.028,.22);float2 p=suv-float2(base.x,base.y-scale*.55);float body=1.0-smoothstep(0.0,.012,sdBox(p,float2(scale*.22,scale*.55)));float head=1.0-smoothstep(scale*.17,scale*.21,length(p-float2(0,scale*.72)));float alpha=clamp(body+head,0.0,1.0);float health=clamp(td.z/100.0,0.0,1.0);color=mix(color,mix(float3(.55,.08,.05),float3(.78,.34,.12),health),alpha*.88);}
+uint projectileCount=min((uint)round(u.worldExtra.z),kMaxProjectiles);for(uint i=0;i<projectileCount;++i){float fd=0;float2 pp=projectWorld(u.projectilePositions[i].xyz,camera,forward,right,aspect,pitch,ads,fd);if(fd>0&&pp.x<2){float tracer=smoothstep(.018,.002,length(suv-pp));color+=tracer*float3(1.0,.62,.18);}}
+float crossScale=mix(1.0,.62,ads);float obstruction=u.weapon.w;float h=(1.0-smoothstep(.0025,.0065,abs(suv.x)))*step(abs(suv.y),.024*crossScale);float vv=(1.0-smoothstep(.0025,.0065,abs(suv.y)))*step(abs(suv.x),.024*crossScale);color=mix(color,obstruction>.5?float3(1,.25,.18):float3(.76,.90,.82),clamp(h+vv,0.0,1.0)*.72);
+float2 wc=mix(float2(.36,-.62),float2(.02,-.55),ads)+float2(u.weapon2.x*7.0,u.weapon2.y*7.0)+float2(u.weapon.z*1.8,-u.weapon.y*2.0);float2 wp=suv-wc;float body=1.0-smoothstep(.008,.018,sdBox(wp,float2(.18,.055)));float handguard=1.0-smoothstep(.008,.018,sdBox(wp-float2(-.20,.015),float2(.10,.035)));float optic=1.0-smoothstep(.008,.018,sdBox(wp-float2(.02,.085),float2(.045,.032)));float weaponMask=clamp(body+handguard+optic,0.0,1.0);float3 weaponColor=obstruction>.5?float3(.34,.12,.08):float3(.12,.15,.14);color=mix(color,weaponColor,weaponMask*.96);float2 muzzle=wc+float2(-.31,.02);float flash=u.timing.w*smoothstep(.09,.0,length(suv-muzzle));color+=flash*float3(1.0,.50,.12);
+return float4(color,1);}

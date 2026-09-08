@@ -10,8 +10,8 @@ settings:
     CLANG_CXX_LIBRARY: "libc++"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
-    MARKETING_VERSION: "0.2.0"
-    CURRENT_PROJECT_VERSION: "7"
+    MARKETING_VERSION: "0.3.0"
+    CURRENT_PROJECT_VERSION: "8"
 targets:
   METSE:
     type: application
@@ -27,8 +27,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bdrdesign.metse
         PRODUCT_NAME: METSE
-        MARKETING_VERSION: "0.2.0"
-        CURRENT_PROJECT_VERSION: "7"
+        MARKETING_VERSION: "0.3.0"
+        CURRENT_PROJECT_VERSION: "8"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: iOS/METSE/Info.plist
         TARGETED_DEVICE_FAMILY: "1"

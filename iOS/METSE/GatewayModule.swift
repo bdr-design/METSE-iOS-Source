@@ -22,6 +22,6 @@ struct GatewayModule {
         .init(title: "العتاد", subtitle: "الأسلحة والتجهيز", symbol: "shield.lefthalf.filled", destination: .loadout),
         .init(title: "مركز التحديث", subtitle: "مؤجل حتى اكتمال البناء الأساسي", symbol: "arrow.triangle.2.circlepath", destination: .updates),
         .init(title: "الإعدادات", subtitle: "العرض، الصوت، التحكم", symbol: "slider.horizontal.3", destination: .settings),
-        .init(title: "مركز الأرصاد", subtitle: "رصد الأداء، المحرك، التصادم والسلامة", symbol: "waveform.path.ecg", destination: .diagnostics)
+        .init(title: "مركز الأرصاد", subtitle: "Input، قتال، Ballistics، Culling، حرارة وسلامة", symbol: "waveform.path.ecg", destination: .diagnostics)
     ]
 }

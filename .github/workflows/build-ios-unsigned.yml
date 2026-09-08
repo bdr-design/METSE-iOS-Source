@@ -1,10 +1,8 @@
-name: METSE iOS - Native Metal Verified Unsigned IPA
-
+name: METSE iOS - Build 008 Mega Combat Verified IPA
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - 'iOS/**'
       - 'Engine/**'
@@ -18,31 +16,24 @@ on:
       - 'BUILD'
       - 'SOURCE_INTEGRITY_SHA256.txt'
       - '.github/workflows/build-ios-unsigned.yml'
-
 permissions:
   contents: read
-
 concurrency:
   group: metse-native-ios-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Source integrity
         run: python3 Scripts/verify_integrity.py
-
       - name: Architecture guardrails
         run: python3 Scripts/guardrails.py
-
-      - name: C++ world + observatory + engine + integrity tests
+      - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
-
       - name: Swift syntax
         shell: bash
         run: |
@@ -50,20 +41,17 @@ jobs:
           while IFS= read -r file; do
             xcrun swiftc -frontend -parse "$file"
           done < <(find iOS -name '*.swift' -type f | sort)
-
       - name: Install XcodeGen
         run: brew install xcodegen
-
       - name: Build native unsigned IPA
         run: bash Scripts/build_unsigned_ipa.sh
-
       - name: Upload verified IPA
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-v0.2.0-build007-world-observatory-unsigned
+          name: METSE-v0.3.0-build008-mega-combat-unsigned
           if-no-files-found: error
           retention-days: 14
           path: |
-            .ci-output/METSE_v0.2.0_build007_unsigned.ipa
-            .ci-output/METSE_v0.2.0_build007_unsigned.ipa.sha256
+            .ci-output/METSE_v0.3.0_build008_unsigned.ipa
+            .ci-output/METSE_v0.3.0_build008_unsigned.ipa.sha256
             .ci-output/xcodebuild.log
