@@ -34,7 +34,14 @@ final class ObservatoryViewController: UIViewController {
         let copy = actionButton("نسخ التقرير", "doc.on.doc"); copy.addAction(UIAction { [weak self, weak copy] _ in guard let self else { return }; UIPasteboard.general.string = self.fullReportText(); var updated = copy?.configuration; updated?.title = "تم النسخ"; copy?.configuration = updated }, for: .touchUpInside)
         let share = actionButton("مشاركة التقرير", "square.and.arrow.up"); share.addAction(UIAction { [weak self, weak share] _ in guard let self, let share else { return }; let a = UIActivityViewController(activityItems: [self.fullReportText()], applicationActivities: nil); a.popoverPresentationController?.sourceView = share; self.present(a, animated: true) }, for: .touchUpInside)
         let actions = row(copy, share)
-        let content = UIStackView(arrangedSubviews: rows + [actions]); content.axis = .vertical; content.spacing = 10
+        let previous = actionButton("مشاركة التقرير السابق", "clock.arrow.circlepath")
+        previous.addAction(UIAction { [weak self, weak previous] _ in
+            guard let self, let previous else { return }
+            let sheet = UIActivityViewController(activityItems: [METSEDiagnosticRecorder.shared.previousText], applicationActivities: nil)
+            sheet.popoverPresentationController?.sourceView = previous
+            self.present(sheet, animated: true)
+        }, for: .touchUpInside)
+        let content = UIStackView(arrangedSubviews: rows + [actions, previous]); content.axis = .vertical; content.spacing = 10
         let scroll = UIScrollView(); scroll.alwaysBounceVertical = true; scroll.addSubview(content); content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(header); view.addSubview(scroll); header.translatesAutoresizingMaskIntoConstraints = false; scroll.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -86,7 +93,7 @@ final class ObservatoryViewController: UIViewController {
         scopeBody.text = (scopeBody.text ?? "") + String(format: "\nFull 32 capable load %.2fs • combined >=64 P %.2fs\nCapture wait %.3fms • held %.3fms • finish %.3fms\nSource %@", num(s,"fullCombatantLoadSeconds"), num(s,"combinedLoadSeconds"), num(s,"diagnosticCaptureWaitMs"), num(s,"diagnosticCaptureMs"), num(s,"diagnosticFinishMs"), str(s,"sourceCommit"))
     }
 
-    private func fullReportText() -> String { engine.observatoryReportText() + "Thermal: \(thermalDescription().name)\nCaptured: \(ISO8601DateFormatter().string(from: Date()))\n" }
+    private func fullReportText() -> String { engine.observatoryReportText() + "Thermal: \(thermalDescription().name)\nCaptured: \(ISO8601DateFormatter().string(from: Date()))\nArchive: \(METSEDiagnosticRecorder.shared.status)\nCoalesced checkpoints: \(METSEDiagnosticRecorder.shared.coalesced)\n" }
     private func num(_ d: [String: Any], _ k: String) -> Double { (d[k] as? NSNumber)?.doubleValue ?? 0 }
     private func bool(_ d: [String: Any], _ k: String) -> Bool { (d[k] as? NSNumber)?.boolValue ?? false }
     private func str(_ d: [String: Any], _ k: String) -> String { if let v = d[k] as? String { return v }; if let v = d[k] as? NSNumber { return v.stringValue }; return "—" }
