@@ -12,7 +12,8 @@ bool CombatantCore::configure(std::size_t index,
                               bool alive,
                               bool combatCapable,
                               bool targetable) noexcept {
-    if(index>=kMaxCombatants||identity.id==0||identity.teamId==0||identity.factionId==0) return false;
+    if(index>=kMaxCombatants||index>count_||identity.id==0||identity.teamId==0||identity.factionId==0||
+       (identity.role!=CombatantRole::Player&&identity.role!=CombatantRole::AI)) return false;
     for(std::size_t i=0;i<count_;++i){
         if(i!=index&&records_[i].identity.id==identity.id) return false;
     }
@@ -29,14 +30,9 @@ bool CombatantCore::syncState(std::size_t index,
                               bool alive,
                               bool combatCapable,
                               bool targetable) noexcept {
-    if(index>=count_||id==0||records_[index].identity.id!=id) return false;
-    if(!alive) combatCapable=false;
-    records_[index].alive=alive;
-    records_[index].combatCapable=combatCapable;
-    records_[index].targetable=targetable&&alive;
-    records_[index].lifecycle=!alive?CombatantLifecycleState::Dead:
+    const auto lifecycle=!alive?CombatantLifecycleState::Dead:
         (combatCapable?CombatantLifecycleState::Active:CombatantLifecycleState::Incapacitated);
-    return true;
+    return syncLifecycle(index,id,lifecycle,targetable);
 }
 
 bool CombatantCore::syncLifecycle(std::size_t index,
@@ -44,7 +40,13 @@ bool CombatantCore::syncLifecycle(std::size_t index,
                                   CombatantLifecycleState lifecycle,
                                   bool targetable) noexcept {
     if(index>=count_||id==0||records_[index].identity.id!=id) return false;
+    if(lifecycle>CombatantLifecycleState::Removed) return false;
     auto& record=records_[index];
+    // Runtime mirroring cannot resurrect a terminal identity. Spawn/reset must
+    // explicitly use configure; Removed does not imply reusable slots.
+    if(record.lifecycle==CombatantLifecycleState::Removed&&lifecycle!=record.lifecycle) return false;
+    if(record.lifecycle==CombatantLifecycleState::Dead&&
+       lifecycle!=CombatantLifecycleState::Dead&&lifecycle!=CombatantLifecycleState::Removed) return false;
     if(lifecycle==CombatantLifecycleState::Removed||lifecycle==CombatantLifecycleState::Dead){
         record.alive=false;
         record.combatCapable=false;
@@ -108,6 +110,8 @@ bool CombatantCore::validate() const noexcept {
     for(std::size_t i=0;i<count_;++i){
         const auto& record=records_[i];
         if(record.identity.id==0||record.identity.teamId==0||record.identity.factionId==0) return false;
+        if((record.identity.role!=CombatantRole::Player&&record.identity.role!=CombatantRole::AI)||
+           record.lifecycle>CombatantLifecycleState::Removed) return false;
         if(!record.alive&&(record.combatCapable||record.targetable)) return false;
         if((record.lifecycle==CombatantLifecycleState::Dead||record.lifecycle==CombatantLifecycleState::Removed) &&
            (record.alive||record.combatCapable||record.targetable)) return false;

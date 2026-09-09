@@ -6,6 +6,7 @@
 
 namespace metse {
 class WorldCollisionCore;
+struct ProjectileSegmentObservation;
 
 enum class AIAlertState : std::uint8_t { Unaware=0, Suspicious=1, Investigating=2, Engaged=3 };
 enum class AISquadOrder : std::uint8_t { Hold=0, Search=1, Assault=2, Defend=3 };
@@ -58,6 +59,8 @@ struct TacticalAgentState {
     double confidence = 0.0;
     double threat = 0.0;
     double health01 = 1.0;
+    double suppression01 = 0.0;
+    std::uint64_t lastSuppressionCorrelationId = 0;
     std::uint64_t actionSequence = 0;
     std::uint32_t squadSourceAgentId = 0;
     std::uint8_t coverCandidateIndex = 0xFFu;
@@ -90,6 +93,10 @@ struct TacticalAIReport {
     std::uint32_t fireAuthorizedAgents = 0;
     std::uint64_t decisionsExecuted = 0;
     std::uint64_t shotsFired = 0;
+    std::uint32_t suppressedAgents = 0;
+    std::uint32_t suppressionChecksThisStep = 0;
+    std::uint64_t suppressionObservations = 0;
+    std::uint64_t suppressionBudgetDrops = 0;
     double highestThreat = 0.0;
     AISquadOrder squadOrder = AISquadOrder::Hold;
 };
@@ -98,6 +105,10 @@ class TacticalAICore final {
 public:
     static constexpr std::size_t kMaxAgents = 32;
     static constexpr std::size_t kMaxDecisionsPerStep = 4;
+    static constexpr std::size_t kMaxSuppressionChecksPerStep = 256;
+    static constexpr double kSuppressionRadiusMeters = 1.5;
+    static constexpr double kSuppressionThreshold = 0.5;
+    static constexpr double kSuppressionDecayPerSecond = 0.5;
     static constexpr std::uint8_t kNoCoverCandidate = 0xFFu;
 
     explicit TacticalAICore(TacticalAIConfig config = {}, WeaponConfig weaponConfig = {}) noexcept;
@@ -121,6 +132,12 @@ public:
     // never performs damage or projectile ownership itself.
     std::size_t fireAuthorizedShots(std::size_t maxShots,
                                     std::array<ShotSolution,kMaxAgents>& out) noexcept;
+
+    // Called only for accepted ballistic traversal, after this slice's AI step.
+    // Observes bounded local exposure; never grants knowledge of a shooter.
+    void observeProjectileSegment(const ProjectileSegmentObservation& segment,
+                                  const CombatantCore& combatants,
+                                  const WorldCollisionCore& world) noexcept;
 
     [[nodiscard]] const TacticalAIConfig& config() const noexcept { return config_; }
     [[nodiscard]] const WeaponConfig& weaponConfig() const noexcept { return weaponConfig_; }
@@ -179,6 +196,9 @@ private:
     std::size_t agentCount_ = 0;
     std::size_t decisionCursor_ = 0;
     std::uint64_t decisionsExecuted_ = 0;
+    std::uint32_t suppressionChecksThisStep_ = 0;
+    std::uint64_t suppressionObservations_ = 0;
+    std::uint64_t suppressionBudgetDrops_ = 0;
 };
 
 } // namespace metse

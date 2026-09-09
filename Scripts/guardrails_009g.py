@@ -113,8 +113,13 @@ require("acceptedCharacterState.grounded" in engine_cpp,
 require("AudioProjectileObserverContext" in engine_cpp and
         "ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_," in engine_cpp,
         "Engine wires direct Ballistics segment observation")
-require("AudioProjectileObserverContext projectileAudio{&audioFX_,cameraPosition(),false};" in engine_cpp,
-        "player projectiles remain explicitly non-hostile before faction contract")
+# 010-A supplies the previously missing authority contract. Preserve G's player
+# self-shot exclusion through actual faction relation, not the old initializer text.
+require("CombatantCore::relation(source->identity,listener->identity)==TargetRelation::Hostile" in engine_cpp and
+        "source->identity.teamId==segment.sourceTeamId" in engine_cpp and
+        "source->identity.factionId==segment.sourceFactionId" in engine_cpp and
+        "observeProjectileSegment(segment,context->listener,derivedHostile)" in engine_cpp,
+        "audio hostility must derive from validated Combatant authority (not ID inequality)")
 for forbidden in ("ballistics_.spawn(ai", "aiBallistics_.spawn", "playerDamageTarget",
                   "magicDamagePlayer"):
     require(forbidden not in engine_cpp + audio_cpp,

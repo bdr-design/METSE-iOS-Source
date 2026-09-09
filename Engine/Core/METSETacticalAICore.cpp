@@ -1,4 +1,5 @@
 #include "METSETacticalAICore.hpp"
+#include "METSEBallisticsCore.hpp"
 #include "METSEWorldCollision.hpp"
 #include <algorithm>
 #include <cmath>
@@ -46,6 +47,9 @@ void TacticalAICore::reset() noexcept {
     agentCount_=0;
     decisionCursor_=0;
     decisionsExecuted_=0;
+    suppressionChecksThisStep_=0;
+    suppressionObservations_=0;
+    suppressionBudgetDrops_=0;
     for(auto& weapon:weapons_) weapon=WeaponCore(weaponConfig_);
 }
 
@@ -71,6 +75,7 @@ bool TacticalAICore::syncAgent(std::size_t index,std::uint32_t id,Vec3 position,
     agent.combatCapable=alive&&combatCapable;
     agent.health01=clamp01(health01);
     if(!agent.combatCapable) clearKnowledgeAndAction(agent);
+    if(!agent.combatCapable){ agent.suppression01=0.0; agent.lastSuppressionCorrelationId=0; }
     agentCount_=std::max(agentCount_,index+1);
     return true;
 }
@@ -82,7 +87,47 @@ bool TacticalAICore::syncAgentCombatState(std::size_t index,std::uint32_t id,boo
     agent.combatCapable=alive&&combatCapable;
     agent.health01=clamp01(health01);
     if(!agent.combatCapable) clearKnowledgeAndAction(agent);
+    if(!agent.combatCapable){ agent.suppression01=0.0; agent.lastSuppressionCorrelationId=0; }
     return true;
+}
+
+void TacticalAICore::observeProjectileSegment(const ProjectileSegmentObservation& segment,
+                                              const CombatantCore& combatants,
+                                              const WorldCollisionCore& world) noexcept {
+    if(!segment.traversed||segment.correlationId==0||!finiteVec(segment.from)||!finiteVec(segment.to)||
+       !std::isfinite(segment.speedMetersPerSecond)||segment.speedMetersPerSecond<=0.0) return;
+    const auto* source=combatants.recordById(segment.sourceCombatantId);
+    if(source==nullptr||source->identity.teamId!=segment.sourceTeamId||
+       source->identity.factionId!=segment.sourceFactionId) return;
+    const Vec3 delta{segment.to.x-segment.from.x,segment.to.y-segment.from.y,segment.to.z-segment.from.z};
+    const double lengthSquared=delta.x*delta.x+delta.y*delta.y+delta.z*delta.z;
+    if(!std::isfinite(lengthSquared)||lengthSquared<=1e-12) return;
+    for(std::size_t i=0;i<agentCount_;++i){
+        if(suppressionChecksThisStep_>=kMaxSuppressionChecksPerStep){
+            ++suppressionBudgetDrops_;
+            return; // deterministic drop-tail; never defer work into another queue.
+        }
+        ++suppressionChecksThisStep_;
+        auto& agent=agents_[i];
+        if(!agent.combatCapable) continue;
+        const auto* target=combatants.recordById(agent.id);
+        if(target==nullptr||CombatantCore::relation(source->identity,target->identity)!=TargetRelation::Hostile) continue;
+        const Vec3 chest{agent.position.x,agent.position.y+kPlayerChestHeight,agent.position.z};
+        const double t=std::clamp(((chest.x-segment.from.x)*delta.x+(chest.y-segment.from.y)*delta.y+
+                                   (chest.z-segment.from.z)*delta.z)/lengthSquared,0.0,1.0);
+        if(!std::isfinite(t)) continue;
+        const Vec3 closest{segment.from.x+delta.x*t,segment.from.y+delta.y*t,segment.from.z+delta.z*t};
+        const double dx=chest.x-closest.x,dy=chest.y-closest.y,dz=chest.z-closest.z;
+        const double distanceSquared=dx*dx+dy*dy+dz*dz;
+        if(!std::isfinite(distanceSquared)||distanceSquared>kSuppressionRadiusMeters*kSuppressionRadiusMeters) continue;
+        if(world.raycastSegment(closest,chest).hit) continue;
+        agent.suppression01=std::max(agent.suppression01,0.75);
+        agent.lastSuppressionCorrelationId=segment.correlationId;
+        agent.fireAuthorized=false;
+        // Re-evaluation is urgent but still passes through the four-decision budget.
+        agent.decisionAgeSeconds=std::max(agent.decisionAgeSeconds,config_.decisionIntervalSeconds);
+        ++suppressionObservations_;
+    }
 }
 
 void TacticalAICore::clearKnowledgeAndAction(TacticalAgentState& agent) noexcept {
@@ -111,12 +156,15 @@ void TacticalAICore::fixedStep(double dt,
                                Vec3 playerVelocity,
                                double playerNoise01) noexcept {
     if(!std::isfinite(dt)||dt<=0.0||!finiteVec(playerPosition)||!finiteVec(playerVelocity)) return;
+    suppressionChecksThisStep_=0;
     const double noise=clamp01(playerNoise01);
     const double hearingRadius=config_.hearingBaseMeters+(config_.hearingMaxMeters-config_.hearingBaseMeters)*noise;
 
     for(std::size_t i=0;i<agentCount_;++i){
         auto& agent=agents_[i];
         if(agent.id==0||!agent.combatCapable) continue;
+        agent.suppression01=std::max(0.0,agent.suppression01-kSuppressionDecayPerSecond*dt);
+        if(agent.suppression01==0.0) agent.lastSuppressionCorrelationId=0;
         perceiveAgent(agent,world,playerPosition,playerVelocity,noise,hearingRadius,dt);
         agent.decisionAgeSeconds+=dt;
         agent.actionAgeSeconds+=dt;
@@ -164,7 +212,7 @@ std::size_t TacticalAICore::fireAuthorizedShots(std::size_t maxShots,
     for(std::size_t i=0;i<agentCount_&&emitted<boundedMax;++i){
         auto& agent=agents_[i];
         auto& weapon=weapons_[i];
-        if(!agent.fireAuthorized||!agent.combatCapable||!agent.hasLineOfSight||
+        if(agent.suppression01>=kSuppressionThreshold||!agent.fireAuthorized||!agent.combatCapable||!agent.hasLineOfSight||
            agent.perceptionSource!=AIPerceptionSource::Vision||
            (agent.action!=AIActionState::Peek&&agent.action!=AIActionState::Suppress)) continue;
 
@@ -323,10 +371,10 @@ void TacticalAICore::decideAgent(std::size_t agentIndex,const WorldCollisionCore
     const Vec3 threatPosition=agent.lastKnownPlayerPosition;
     const double threatDistance=distanceXZ(agent.position,threatPosition);
 
-    if(agent.hasLineOfSight){
+    if(agent.hasLineOfSight||agent.suppression01>=kSuppressionThreshold){
         Vec3 coverPosition{},peekPosition{};
         std::uint8_t coverIndex=kNoCoverCandidate;
-        const bool retreat=agent.health01<=config_.retreatHealth01;
+        const bool retreat=agent.health01<=config_.retreatHealth01||agent.suppression01>=kSuppressionThreshold;
         const bool foundCover=selectCover(agent,world,threatPosition,retreat,coverPosition,peekPosition,coverIndex);
         if(foundCover){
             agent.coverPosition=coverPosition;
@@ -334,6 +382,10 @@ void TacticalAICore::decideAgent(std::size_t agentIndex,const WorldCollisionCore
             agent.coverCandidateIndex=coverIndex;
             if(distanceXZ(agent.position,coverPosition)>config_.coverArrivalRadiusMeters){
                 setAction(agent,retreat?AIActionState::Retreat:AIActionState::MoveToCover,coverPosition);
+                return;
+            }
+            if(agent.suppression01>=kSuppressionThreshold){
+                setAction(agent,AIActionState::Hold,agent.position);
                 return;
             }
             if(distanceXZ(peekPosition,coverPosition)>0.10){
@@ -501,6 +553,7 @@ bool TacticalAICore::authorizeFire(std::size_t agentIndex,const WorldCollisionCo
     if(agentIndex>=agentCount_) return false;
     auto& agent=agents_[agentIndex];
     auto& weapon=weapons_[agentIndex];
+    if(agent.suppression01>=kSuppressionThreshold) return false;
     if(!agent.combatCapable||!agent.hasLineOfSight||agent.perceptionSource!=AIPerceptionSource::Vision) return false;
     if(agent.action!=AIActionState::Peek&&agent.action!=AIActionState::Suppress) return false;
 
@@ -551,10 +604,14 @@ const WeaponState* TacticalAICore::agentWeaponState(std::size_t index) const noe
 TacticalAIReport TacticalAICore::report() const noexcept {
     TacticalAIReport out{};
     out.decisionsExecuted=decisionsExecuted_;
+    out.suppressionChecksThisStep=suppressionChecksThisStep_;
+    out.suppressionObservations=suppressionObservations_;
+    out.suppressionBudgetDrops=suppressionBudgetDrops_;
     for(std::size_t i=0;i<agentCount_;++i){
         const auto& agent=agents_[i];
         if(agent.id==0||!agent.combatCapable) continue;
         ++out.activeAgents;
+        if(agent.suppression01>=kSuppressionThreshold) ++out.suppressedAgents;
         if(agent.hasLineOfSight) ++out.lineOfSightAgents;
         if(agent.heardPlayer) ++out.hearingAgents;
         if(agent.alert==AIAlertState::Suspicious) ++out.suspiciousAgents;
@@ -583,6 +640,7 @@ TacticalAIReport TacticalAICore::report() const noexcept {
 }
 
 bool TacticalAICore::validate() const noexcept {
+    if(suppressionChecksThisStep_>kMaxSuppressionChecksPerStep) return false;
     if(agentCount_>kMaxAgents||(agentCount_==0?decisionCursor_!=0:decisionCursor_>=agentCount_)||
        !std::isfinite(config_.maxVisionDistanceMeters)||config_.maxVisionDistanceMeters<=0.0||
        !std::isfinite(config_.horizontalFovRadians)||config_.horizontalFovRadians<=0.0||
@@ -598,6 +656,11 @@ bool TacticalAICore::validate() const noexcept {
     for(std::size_t i=0;i<agentCount_;++i){
         const auto& agent=agents_[i];
         if(agent.id==0) continue;
+        if(!std::isfinite(agent.suppression01)||agent.suppression01<0.0||agent.suppression01>1.0||
+           (agent.suppression01==0.0&&agent.lastSuppressionCorrelationId!=0)||
+           (agent.suppression01>0.0&&agent.lastSuppressionCorrelationId==0)||
+           (!agent.combatCapable&&agent.suppression01!=0.0)||
+           (agent.suppression01>=kSuppressionThreshold&&agent.fireAuthorized)) return false;
         if(!finiteVec(agent.position)||!finiteVec(agent.lastKnownPlayerPosition)||!finiteVec(agent.actionTarget)||!finiteVec(agent.coverPosition)||!finiteVec(agent.peekPosition)||
            !std::isfinite(agent.facingYaw)||!std::isfinite(agent.memoryAgeSeconds)||agent.memoryAgeSeconds<0.0||
            !std::isfinite(agent.decisionAgeSeconds)||agent.decisionAgeSeconds<0.0||!std::isfinite(agent.actionAgeSeconds)||agent.actionAgeSeconds<0.0||
