@@ -17,6 +17,21 @@ static constexpr NSUInteger kRenderFXCap = 16;
 static_assert(kRenderFXCap <= metse::AudioFXCore::kFXCapacity,
               "Presentation FX budget cannot exceed the simulation-owned pool");
 
+static constexpr uint64_t kDiagnosticIntegrity = 1ull << 0;
+static constexpr uint64_t kDiagnosticTelemetry = 1ull << 1;
+static constexpr uint64_t kDiagnosticCallback = 1ull << 2;
+static constexpr uint64_t kDiagnosticCatchUp = 1ull << 3;
+static constexpr uint64_t kDiagnosticSimulationSlice = 1ull << 4;
+static constexpr uint64_t kDiagnosticInputPressure = 1ull << 5;
+static constexpr uint64_t kDiagnosticPresentationDrop = 1ull << 6;
+static constexpr uint64_t kDiagnosticFXDrop = 1ull << 7;
+static constexpr uint64_t kDiagnosticDrawableMiss = 1ull << 8;
+static constexpr uint64_t kDiagnosticThermalCritical = 1ull << 9;
+static constexpr uint64_t kCoverageShortRun = 1ull << 0;
+static constexpr uint64_t kCoverageNoAI = 1ull << 1;
+static constexpr uint64_t kCoverageBelow32AI = 1ull << 2;
+static constexpr uint64_t kCoverageNoProjectile = 1ull << 3;
+
 struct METSEFrameUniforms {
     vector_float4 timing;
     vector_float4 camera;
@@ -64,8 +79,14 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
     double _coreCriticalTotalMilliseconds;
     double _coreCriticalMaxMilliseconds;
     double _callbackGapMaxMilliseconds;
+    double _callbackGapTotalMilliseconds;
+    uint64_t _callbackSamples;
+    uint64_t _callbackGapsOverBudget;
+    uint64_t _callbackGapsOver50ms;
+    uint64_t _callbackGapsOver100ms;
     uint64_t _callbackGapsOver250ms;
     uint64_t _lifecycleTimingResets;
+    uint64_t _thermalFallbackFrames;
     BOOL _suppressNextFrameGap;
     NSInteger _presentationFPS;
 }
@@ -179,13 +200,29 @@ static NSString *METSESquadOrderName(metse::AISquadOrder order) {
     return @"UNKNOWN";
 }
 
+static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
+    switch(state){
+        case NSProcessInfoThermalStateNominal:return @"NOMINAL";
+        case NSProcessInfoThermalStateFair:return @"FAIR";
+        case NSProcessInfoThermalStateSerious:return @"SERIOUS";
+        case NSProcessInfoThermalStateCritical:return @"CRITICAL";
+    }
+    return @"UNKNOWN";
+}
+
 - (void)updateThermalPresentationIfNeeded:(CFTimeInterval)now {
     if (now < _nextThermalCheck) return;
     _nextThermalCheck = now + 1.0;
     NSProcessInfoThermalState state = NSProcessInfo.processInfo.thermalState;
     NSInteger target = (state == NSProcessInfoThermalStateSerious || state == NSProcessInfoThermalStateCritical) ? 30 : 60;
+    BOOL changed = NO;
+    os_unfair_lock_lock(&_telemetryLock);
     if (_presentationFPS != target) {
         _presentationFPS = target;
+        changed = YES;
+    }
+    os_unfair_lock_unlock(&_telemetryLock);
+    if (changed) {
         self.metalView.preferredFramesPerSecond = target;
     }
 }
@@ -220,18 +257,47 @@ static NSString *METSESquadOrderName(metse::AISquadOrder order) {
     os_unfair_lock_lock(&_telemetryLock);
     uint64_t rendered = _renderedFrames, misses = _drawableMisses;
     double cpuTotal = _renderCpuTotalMilliseconds, cpuMax = _renderCpuMaxMilliseconds;
-    uint64_t lockSamples = _coreLockSamples, callbackSpikes = _callbackGapsOver250ms, lifecycleResets = _lifecycleTimingResets;
+    uint64_t lockSamples = _coreLockSamples, callbackSamples = _callbackSamples;
+    uint64_t callbackBudgetSpikes = _callbackGapsOverBudget, callback50Spikes = _callbackGapsOver50ms;
+    uint64_t callback100Spikes = _callbackGapsOver100ms, callbackSpikes = _callbackGapsOver250ms;
+    uint64_t lifecycleResets = _lifecycleTimingResets, thermalFallbackFrames = _thermalFallbackFrames;
     uint64_t cueSnapshotDrops = _audioCueSnapshotDrops;
     double lockWaitTotal = _coreLockWaitTotalMilliseconds, lockWaitMax = _coreLockWaitMaxMilliseconds;
     double coreCriticalTotal = _coreCriticalTotalMilliseconds, coreCriticalMax = _coreCriticalMaxMilliseconds;
-    double callbackGapMax = _callbackGapMaxMilliseconds;
+    double callbackGapTotal = _callbackGapTotalMilliseconds, callbackGapMax = _callbackGapMaxMilliseconds;
+    NSInteger presentationFPS = _presentationFPS;
     os_unfair_lock_unlock(&_telemetryLock);
 
     const double cpuAvg = rendered ? cpuTotal / (double)rendered : 0.0;
     const double lockWaitAvg = lockSamples ? lockWaitTotal / (double)lockSamples : 0.0;
     const double coreCriticalAvg = lockSamples ? coreCriticalTotal / (double)lockSamples : 0.0;
+    const double callbackGapAvg = callbackSamples ? callbackGapTotal / (double)callbackSamples : 0.0;
+    const NSProcessInfoThermalState thermalState = NSProcessInfo.processInfo.thermalState;
+    uint64_t diagnosticProblemMask = 0;
+    if(thermalState==NSProcessInfoThermalStateCritical) diagnosticProblemMask |= kDiagnosticThermalCritical;
+    if(!d.journalValid || !d.worldValid || !d.observatoryValid || !d.inputQueueValid || !d.weaponValid ||
+       !d.ballisticsValid || !d.damageValid || !d.visibilityValid || !d.tacticalAIValid || !d.audioFXValid){
+        diagnosticProblemMask |= kDiagnosticIntegrity;
+    }
+    if(o.rejectedSamples>0 || o.simulationTickRegressions>0) diagnosticProblemMask |= kDiagnosticTelemetry;
+    if(d.preSpikeCallbackFrames>0 || callbackBudgetSpikes>0 || callbackSpikes>0 ||
+       (presentationFPS>=60 && o.windowFramesOver20ms>0)) diagnosticProblemMask |= kDiagnosticCallback;
+    if(d.preSpikeCatchUpFrames>0 || o.catchUpClampedFrames>0) diagnosticProblemMask |= kDiagnosticCatchUp;
+    if(d.preSpikeSimulationFrames>0 || o.simulationSlicesOver20ms>0) diagnosticProblemMask |= kDiagnosticSimulationSlice;
+    if(d.inputQueue.highWatermark>=metse::InputCommandQueue::kCapacity || d.inputQueue.evictedCoalescible>0 ||
+       d.inputQueue.rejectedCritical>0 || d.inputQueue.rejectedInvalid>0) diagnosticProblemMask |= kDiagnosticInputPressure;
+    if(_audioPresenter.droppedVoiceCount>0 || cueSnapshotDrops>0) diagnosticProblemMask |= kDiagnosticPresentationDrop;
+    if(d.audioFX.fxDropped>0) diagnosticProblemMask |= kDiagnosticFXDrop;
+    if(misses>0) diagnosticProblemMask |= kDiagnosticDrawableMiss;
+    uint64_t coverageMask = 0;
+    if(o.observedRealSeconds<300.0) coverageMask |= kCoverageShortRun;
+    if(o.peakAIActiveAgents==0) coverageMask |= kCoverageNoAI;
+    else if(o.peakAIActiveAgents<metse::TacticalAICore::kMaxAgents) coverageMask |= kCoverageBelow32AI;
+    if(d.ballistics.spawned==0) coverageMask |= kCoverageNoProjectile;
     return @{
-        @"version":@"0.3.0", @"build":@8, @"presentationFPS":@(_presentationFPS),
+        @"version":@"0.3.0", @"build":@8, @"presentationFPS":@(presentationFPS),
+        @"thermalState":METSEThermalStateName(thermalState), @"thermalFallbackActive":@(presentationFPS==30),
+        @"thermalFallbackFrames":@(thermalFallbackFrames),
         @"simulationTick":@(s.simulationTick), @"simulationSeconds":@(s.simulationSeconds),
         @"stance":METSEStanceName(s.stance), @"gait":METSEGaitName(s.gait), @"speed":@(s.horizontalSpeed),
         @"playerX":@(s.playerX), @"playerY":@(s.playerY), @"playerZ":@(s.playerZ), @"grounded":@(s.grounded),
@@ -242,48 +308,67 @@ static NSString *METSESquadOrderName(metse::AISquadOrder order) {
         @"primaryTargetHealth":@(s.primaryTargetHealth), @"primaryTargetBleedingPerSecond":@(s.primaryTargetBleedingPerSecond),
         @"primaryTargetHelmetArmorJoules":@(s.primaryTargetHelmetArmorJoules), @"primaryTargetTorsoArmorJoules":@(s.primaryTargetTorsoArmorJoules),
         @"primaryTargetCombatState":METSECombatStateName(s.primaryTargetCombatState),
-        @"averageFrameMs":@(o.averageFrameMilliseconds), @"p95FrameMs":@(o.p95FrameMilliseconds), @"p99FrameMs":@(o.p99FrameMilliseconds), @"maxFrameMs":@(o.maxFrameMilliseconds), @"estimatedFPS":@(o.estimatedFPS), @"onePercentLowFPS":@(o.onePercentLowFPS), @"pointOnePercentLowFPS":@(o.pointOnePercentLowFPS),
-        @"framesOver20ms":@(o.framesOver20ms), @"framesOver33ms":@(o.framesOver33ms), @"catchUpClampedFrames":@(o.catchUpClampedFrames),
-        @"simulationSliceAverageMs":@(o.averageSimulationSliceMilliseconds), @"simulationSliceMaxMs":@(o.maxSimulationSliceMilliseconds), @"simulationSlicesOver20ms":@(o.simulationSlicesOver20ms),
+        @"observedFrames":@(o.observedFrames), @"retainedFrames":@(o.retainedFrames), @"observedRealSeconds":@(o.observedRealSeconds), @"retainedRealSeconds":@(o.retainedRealSeconds), @"retainedSimulationTicks":@(o.retainedSimulationTicks),
+        @"telemetryRejectedSamples":@(o.rejectedSamples), @"telemetryRejectedNonFinite":@(o.rejectedNonFiniteSamples), @"telemetryRejectedRange":@(o.rejectedRangeSamples), @"simulationTickRegressions":@(o.simulationTickRegressions),
+        @"sessionAverageFrameMs":@(o.sessionAverageFrameMilliseconds), @"averageFrameMs":@(o.averageFrameMilliseconds), @"p95FrameMs":@(o.p95FrameMilliseconds), @"p99FrameMs":@(o.p99FrameMilliseconds), @"maxFrameMs":@(o.maxFrameMilliseconds), @"estimatedFPS":@(o.estimatedFPS), @"onePercentLowFPS":@(o.onePercentLowFPS), @"pointOnePercentLowFPS":@(o.pointOnePercentLowFPS),
+        @"framesOver20ms":@(o.framesOver20ms), @"framesOver33ms":@(o.framesOver33ms), @"windowFramesOver20ms":@(o.windowFramesOver20ms), @"windowFramesOver33ms":@(o.windowFramesOver33ms), @"catchUpClampedFrames":@(o.catchUpClampedFrames), @"windowCatchUpClampedFrames":@(o.windowCatchUpClampedFrames),
+        @"sessionSimulationSliceAverageMs":@(o.sessionAverageSimulationSliceMilliseconds), @"simulationSliceAverageMs":@(o.averageSimulationSliceMilliseconds), @"simulationSliceMaxMs":@(o.maxSimulationSliceMilliseconds), @"simulationSlicesOver20ms":@(o.simulationSlicesOver20ms), @"windowSimulationSlicesOver20ms":@(o.windowSimulationSlicesOver20ms),
         @"projectileContacts":@(o.totalProjectileContacts), @"projectileTerminalContacts":@(o.totalProjectileTerminalContacts), @"projectileTargetContacts":@(o.totalProjectileTargetContacts),
-        @"queueDepth":@(d.inputQueueDepth), @"queueHighWatermark":@(d.inputQueue.highWatermark), @"queueCoalesced":@(d.inputQueue.coalesced), @"queueEvicted":@(d.inputQueue.evictedCoalescible), @"queueRejectedCritical":@(d.inputQueue.rejectedCritical), @"queueRejectedInvalid":@(d.inputQueue.rejectedInvalid),
+        @"queueDepth":@(d.inputQueueDepth), @"queueHighWatermark":@(d.inputQueue.highWatermark), @"queueCoalesced":@(d.inputQueue.coalesced), @"queueEvicted":@(d.inputQueue.evictedCoalescible), @"queueRejectedCritical":@(d.inputQueue.rejectedCritical), @"queueRejectedInvalid":@(d.inputQueue.rejectedInvalid), @"peakProjectiles":@(o.peakProjectiles),
         @"projectilesSpawned":@(d.ballistics.spawned), @"worldImpacts":@(d.ballistics.worldImpacts), @"terminalWorldImpacts":@(d.ballistics.terminalWorldImpacts), @"targetImpacts":@(d.ballistics.targetImpacts), @"penetrations":@(d.ballistics.penetrations), @"ricochets":@(d.ballistics.ricochets),
         @"audioCues":@(d.audioFX.cuesEmitted), @"audioFootsteps":@(d.audioFX.footsteps), @"audioOutdoorShots":@(d.audioFX.outdoorShots), @"audioIndoorShots":@(d.audioFX.indoorShots), @"audioBulletCracks":@(d.audioFX.bulletCracks), @"audioNearMisses":@(d.audioFX.nearMisses),
         @"fxActive":@(d.audioFX.activeFX), @"fxSpawned":@(d.audioFX.fxSpawned), @"fxDropped":@(d.audioFX.fxDropped),
         @"audioPresentationDrops":@(_audioPresenter.droppedVoiceCount), @"audioCueSnapshotDrops":@(cueSnapshotDrops),
-        @"visibilityFull":@(d.visibility.full), @"visibilityReduced":@(d.visibility.reduced), @"visibilityMinimal":@(d.visibility.minimal), @"visibilityDormant":@(d.visibility.dormant), @"visibilityOccluded":@(d.visibility.occluded), @"visibilityBudgetDemotions":@(d.visibility.budgetDemotions),
+        @"visibilityFull":@(d.visibility.full), @"visibilityReduced":@(d.visibility.reduced), @"visibilityMinimal":@(d.visibility.minimal), @"visibilityDormant":@(d.visibility.dormant), @"visibilityOccluded":@(d.visibility.occluded), @"visibilityBudgetDemotions":@(d.visibility.budgetDemotions), @"visibilityPeakFull":@(o.peakVisibilityFull), @"visibilityPeakReduced":@(o.peakVisibilityReduced), @"visibilityPeakMinimal":@(o.peakVisibilityMinimal), @"visibilityPeakDormant":@(o.peakVisibilityDormant),
         @"aiActive":@(d.tacticalAI.activeAgents), @"aiLOS":@(d.tacticalAI.lineOfSightAgents), @"aiHearing":@(d.tacticalAI.hearingAgents), @"aiSuspicious":@(d.tacticalAI.suspiciousAgents), @"aiInvestigating":@(d.tacticalAI.investigatingAgents), @"aiEngaged":@(d.tacticalAI.engagedAgents), @"aiHighestThreat":@(d.tacticalAI.highestThreat), @"aiSquadOrder":METSESquadOrderName(d.tacticalAI.squadOrder),
-        @"aiDecisions":@(d.tacticalAI.decisionsExecuted), @"aiPerceptionAgents":@(o.latestAIActiveAgents), @"aiPerceptionLOS":@(o.latestAILOSAgents),
+        @"aiDecisions":@(d.tacticalAI.decisionsExecuted), @"aiPerceptionAgents":@(o.latestAIActiveAgents), @"aiPerceptionLOS":@(o.latestAILOSAgents), @"aiPeakActive":@(o.peakAIActiveAgents), @"aiPeakLOS":@(o.peakAILOSAgents),
         @"collisionContacts":@(d.sessionCollisionContacts), @"worldObstacleCount":@(d.worldObstacleCount),
         @"journalValid":@(d.journalValid), @"worldValid":@(d.worldValid), @"observatoryValid":@(d.observatoryValid), @"queueValid":@(d.inputQueueValid), @"weaponValid":@(d.weaponValid), @"ballisticsValid":@(d.ballisticsValid), @"damageValid":@(d.damageValid), @"visibilityValid":@(d.visibilityValid), @"tacticalAIValid":@(d.tacticalAIValid), @"audioFXValid":@(d.audioFXValid),
-        @"commandsCommitted":@(d.integrity.commandsCommitted), @"commandsRejected":@(d.integrity.commandsRejected), @"commandsRolledBack":@(d.integrity.commandsRolledBack), @"simulationInvariantRollbacks":@(d.simulationInvariantRollbacks), @"blackBoxFrames":@(d.retainedBlackBoxFrames), @"preSpikeBlackBoxFrames":@(d.preSpikeBlackBoxFrames),
+        @"commandsCommitted":@(d.integrity.commandsCommitted), @"commandsRejected":@(d.integrity.commandsRejected), @"commandsRolledBack":@(d.integrity.commandsRolledBack), @"simulationInvariantRollbacks":@(d.simulationInvariantRollbacks), @"blackBoxFrames":@(d.retainedBlackBoxFrames), @"preSpikeBlackBoxFrames":@(d.preSpikeBlackBoxFrames), @"preSpikeCallbackFrames":@(d.preSpikeCallbackFrames), @"preSpikeCatchUpFrames":@(d.preSpikeCatchUpFrames), @"preSpikeSimulationFrames":@(d.preSpikeSimulationFrames), @"retainedPreSpikeCallbackFrames":@(d.retainedPreSpikeCallbackFrames), @"retainedPreSpikeCatchUpFrames":@(d.retainedPreSpikeCatchUpFrames), @"retainedPreSpikeSimulationFrames":@(d.retainedPreSpikeSimulationFrames),
         @"denyFireCooldown":@(d.gameplayDenials.fireCooldown), @"denyFireReloading":@(d.gameplayDenials.fireReloading), @"denyFireObstructed":@(d.gameplayDenials.fireObstructed), @"denyFireEmpty":@(d.gameplayDenials.fireEmpty), @"denyFireSprintRecovery":@(d.gameplayDenials.fireSprintRecovery), @"denyProjectileCapacity":@(d.gameplayDenials.projectileCapacity), @"denyReloadInvalid":@(d.gameplayDenials.reloadInvalid), @"autoReloadStarted":@(d.gameplayDenials.autoReloadStarted),
         @"stateHash":[NSString stringWithUTF8String:stateHash.c_str()], @"journalHead":[NSString stringWithUTF8String:journalHead.c_str()],
         @"renderedFrames":@(rendered), @"drawableMisses":@(misses), @"renderCpuAverageMs":@(cpuAvg), @"renderCpuMaxMs":@(cpuMax),
         @"coreLockWaitAverageMs":@(lockWaitAvg), @"coreLockWaitMaxMs":@(lockWaitMax), @"coreCriticalAverageMs":@(coreCriticalAvg), @"coreCriticalMaxMs":@(coreCriticalMax),
-        @"callbackGapMaxMs":@(callbackGapMax), @"callbackGapsOver250ms":@(callbackSpikes), @"lifecycleTimingResets":@(lifecycleResets)
+        @"callbackGapAverageMs":@(callbackGapAvg), @"callbackGapMaxMs":@(callbackGapMax), @"callbackGapsOverBudget":@(callbackBudgetSpikes), @"callbackGapsOver50ms":@(callback50Spikes), @"callbackGapsOver100ms":@(callback100Spikes), @"callbackGapsOver250ms":@(callbackSpikes), @"lifecycleTimingResets":@(lifecycleResets),
+        @"diagnosticProblemMask":@(diagnosticProblemMask), @"acceptanceCoverageMask":@(coverageMask)
     };
 }
 
 - (NSString *)observatoryReportText {
     NSDictionary *s = [self observatorySnapshot];
-    return [NSString stringWithFormat:
-        @"METSE OBSERVATORY V4 / BUILD009-H\nVersion %@ Build %@\nPresentation %@ FPS / Simulation 60 Hz\nTick %@ / %.2fs\nFrame %.1f FPS avg %.2fms p95 %.2f p99 %.2f max %.2f | 1%% low %.1f | 0.1%% low %.1f\nInput Q %@ peak %@ coalesced %@ evicted %@ rejectedCritical %@ rejectedInvalid %@\nWeapon %@/%@ ADS %.0f%% reload %@ obstructed %@\nCombat shots %@ projectiles %@ hits %@ incap %@ kills %@ | targetHP %.1f state %@ bleed %.2f/s\nArmor helmet %.0fJ torso %.0fJ | armorHits %@ bleedTransitions %@\nBallistics spawned %@ worldContacts %@ terminalWorld %@ targetImpacts %@ penetrations %@ ricochets %@\nAI active %@ LOS %@ hearing %@ engaged %@ order %@ threat %.2f\nAudio cues %@ steps %@ shots O/I %@/%@ crack %@ near %@ | FX active %@ spawned %@ dropped %@ | presentationDrop %@ snapshotDrop %@\nVisibility F/R/M/D %@/%@/%@/%@ occluded %@ demoted %@\nIntegrity JRN %@ committed %@ rejected %@ rollback %@ simRollback %@\nGameplayDenials cooldown %@ reloading %@ obstructed %@ empty %@ sprintRecovery %@ capacity %@ reloadInvalid %@ autoReload %@\nRenderer frames %@ misses %@ CPU avg %.3fms max %.3fms\nTiming lockWait avg %.3fms max %.3fms | coreCritical avg %.3fms max %.3fms | callbackGap max %.2fms >250ms %@ lifecycleResets %@\n009-H slice avg %.3fms max %.3fms >20ms %@ | projectile contacts %@ terminal %@ target %@ | AI decisions %@\nBlackBox preSpike %@\nStateHash %@\nJournalHead %@\n",
-        s[@"version"],s[@"build"],s[@"presentationFPS"],s[@"simulationTick"],[s[@"simulationSeconds"] doubleValue],
+    NSMutableString *report=[NSMutableString stringWithFormat:@"METSE OBSERVATORY V4 / BUILD009-H\nVersion %@ Build %@\nPresentation %@ FPS / Simulation 60 Hz\nThermal %@ fallback %@\nTick %@ / %.2fs\n",
+        s[@"version"],s[@"build"],s[@"presentationFPS"],s[@"thermalState"],[s[@"thermalFallbackActive"] boolValue]?@"ACTIVE":@"OFF",s[@"simulationTick"],[s[@"simulationSeconds"] doubleValue]];
+    [report appendFormat:@"Window observed %.2fs retained %.2fs (%@/%@ frames)\nTelemetry rejected %@ (nonFinite %@ range %@ tickRegression %@)\n",
+        [s[@"observedRealSeconds"] doubleValue],[s[@"retainedRealSeconds"] doubleValue],s[@"retainedFrames"],s[@"observedFrames"],s[@"telemetryRejectedSamples"],s[@"telemetryRejectedNonFinite"],s[@"telemetryRejectedRange"],s[@"simulationTickRegressions"]];
+    [report appendFormat:@"Frame window %.1f FPS avg %.2fms p95 %.2f p99 %.2f max %.2f | 1%% low %.1f | 0.1%% low %.1f\nFrame session avg %.2fms >20ms %@ >33ms %@\n",
         [s[@"estimatedFPS"] doubleValue],[s[@"averageFrameMs"] doubleValue],[s[@"p95FrameMs"] doubleValue],[s[@"p99FrameMs"] doubleValue],[s[@"maxFrameMs"] doubleValue],[s[@"onePercentLowFPS"] doubleValue],[s[@"pointOnePercentLowFPS"] doubleValue],
-        s[@"queueDepth"],s[@"queueHighWatermark"],s[@"queueCoalesced"],s[@"queueEvicted"],s[@"queueRejectedCritical"],s[@"queueRejectedInvalid"],
-        s[@"ammo"],s[@"reserveAmmo"],[s[@"adsAlpha"] doubleValue]*100.0,[s[@"reloading"] boolValue]?@"YES":@"NO",[s[@"weaponObstructed"] boolValue]?@"YES":@"NO",
+        [s[@"sessionAverageFrameMs"] doubleValue],s[@"framesOver20ms"],s[@"framesOver33ms"]];
+    [report appendFormat:@"Input Q %@ peak %@ coalesced %@ evicted %@ rejectedCritical %@ rejectedInvalid %@\n",
+        s[@"queueDepth"],s[@"queueHighWatermark"],s[@"queueCoalesced"],s[@"queueEvicted"],s[@"queueRejectedCritical"],s[@"queueRejectedInvalid"]];
+    [report appendFormat:@"Weapon %@/%@ ADS %.0f%% reload %@ obstructed %@\n",
+        s[@"ammo"],s[@"reserveAmmo"],[s[@"adsAlpha"] doubleValue]*100.0,[s[@"reloading"] boolValue]?@"YES":@"NO",[s[@"weaponObstructed"] boolValue]?@"YES":@"NO"];
+    [report appendFormat:@"Combat shots %@ projectiles %@ hits %@ incap %@ kills %@ | targetHP %.1f state %@ bleed %.2f/s\nArmor helmet %.0fJ torso %.0fJ | armorHits %@ bleedTransitions %@\n",
         s[@"shotsFired"],s[@"activeProjectiles"],s[@"damageHits"],s[@"damageIncapacitations"],s[@"damageKills"],[s[@"primaryTargetHealth"] doubleValue],s[@"primaryTargetCombatState"],[s[@"primaryTargetBleedingPerSecond"] doubleValue],
-        [s[@"primaryTargetHelmetArmorJoules"] doubleValue],[s[@"primaryTargetTorsoArmorJoules"] doubleValue],s[@"damageArmorHits"],s[@"damageBleedTransitions"],
-        s[@"projectilesSpawned"],s[@"worldImpacts"],s[@"terminalWorldImpacts"],s[@"targetImpacts"],s[@"penetrations"],s[@"ricochets"],
-        s[@"aiActive"],s[@"aiLOS"],s[@"aiHearing"],s[@"aiEngaged"],s[@"aiSquadOrder"],[s[@"aiHighestThreat"] doubleValue],
-        s[@"audioCues"],s[@"audioFootsteps"],s[@"audioOutdoorShots"],s[@"audioIndoorShots"],s[@"audioBulletCracks"],s[@"audioNearMisses"],s[@"fxActive"],s[@"fxSpawned"],s[@"fxDropped"],s[@"audioPresentationDrops"],s[@"audioCueSnapshotDrops"],
-        s[@"visibilityFull"],s[@"visibilityReduced"],s[@"visibilityMinimal"],s[@"visibilityDormant"],s[@"visibilityOccluded"],s[@"visibilityBudgetDemotions"],
-        [s[@"journalValid"] boolValue]?@"OK":@"FAIL",s[@"commandsCommitted"],s[@"commandsRejected"],s[@"commandsRolledBack"],s[@"simulationInvariantRollbacks"],
-        s[@"denyFireCooldown"],s[@"denyFireReloading"],s[@"denyFireObstructed"],s[@"denyFireEmpty"],s[@"denyFireSprintRecovery"],s[@"denyProjectileCapacity"],s[@"denyReloadInvalid"],s[@"autoReloadStarted"],
-        s[@"renderedFrames"],s[@"drawableMisses"],[s[@"renderCpuAverageMs"] doubleValue],[s[@"renderCpuMaxMs"] doubleValue],
-        [s[@"coreLockWaitAverageMs"] doubleValue],[s[@"coreLockWaitMaxMs"] doubleValue],[s[@"coreCriticalAverageMs"] doubleValue],[s[@"coreCriticalMaxMs"] doubleValue],[s[@"callbackGapMaxMs"] doubleValue],s[@"callbackGapsOver250ms"],s[@"lifecycleTimingResets"],
-        [s[@"simulationSliceAverageMs"] doubleValue],[s[@"simulationSliceMaxMs"] doubleValue],s[@"simulationSlicesOver20ms"],s[@"projectileContacts"],s[@"projectileTerminalContacts"],s[@"projectileTargetContacts"],s[@"aiDecisions"],s[@"preSpikeBlackBoxFrames"],s[@"stateHash"],s[@"journalHead"]];
+        [s[@"primaryTargetHelmetArmorJoules"] doubleValue],[s[@"primaryTargetTorsoArmorJoules"] doubleValue],s[@"damageArmorHits"],s[@"damageBleedTransitions"]];
+    [report appendFormat:@"Ballistics spawned %@ worldContacts %@ terminalWorld %@ targetImpacts %@ penetrations %@ ricochets %@\n",
+        s[@"projectilesSpawned"],s[@"worldImpacts"],s[@"terminalWorldImpacts"],s[@"targetImpacts"],s[@"penetrations"],s[@"ricochets"]];
+    [report appendFormat:@"AI active %@ peak %@ LOS %@ peakLOS %@ hearing %@ engaged %@ order %@ threat %.2f decisions %@\n",
+        s[@"aiActive"],s[@"aiPeakActive"],s[@"aiLOS"],s[@"aiPeakLOS"],s[@"aiHearing"],s[@"aiEngaged"],s[@"aiSquadOrder"],[s[@"aiHighestThreat"] doubleValue],s[@"aiDecisions"]];
+    [report appendFormat:@"Audio cues %@ steps %@ shots O/I %@/%@ crack %@ near %@ | FX active %@ spawned %@ dropped %@ | presentationDrop %@ snapshotDrop %@\n",
+        s[@"audioCues"],s[@"audioFootsteps"],s[@"audioOutdoorShots"],s[@"audioIndoorShots"],s[@"audioBulletCracks"],s[@"audioNearMisses"],s[@"fxActive"],s[@"fxSpawned"],s[@"fxDropped"],s[@"audioPresentationDrops"],s[@"audioCueSnapshotDrops"]];
+    [report appendFormat:@"Visibility F/R/M/D %@/%@/%@/%@ peak %@/%@/%@/%@ occluded %@ demoted %@\n",
+        s[@"visibilityFull"],s[@"visibilityReduced"],s[@"visibilityMinimal"],s[@"visibilityDormant"],s[@"visibilityPeakFull"],s[@"visibilityPeakReduced"],s[@"visibilityPeakMinimal"],s[@"visibilityPeakDormant"],s[@"visibilityOccluded"],s[@"visibilityBudgetDemotions"]];
+    [report appendFormat:@"Integrity JRN %@ committed %@ rejected %@ rollback %@ simRollback %@\nGameplayDenials cooldown %@ reloading %@ obstructed %@ empty %@ sprintRecovery %@ capacity %@ reloadInvalid %@ autoReload %@\n",
+        [s[@"journalValid"] boolValue]?@"OK":@"FAIL",s[@"commandsCommitted"],s[@"commandsRejected"],s[@"commandsRolledBack"],s[@"simulationInvariantRollbacks"],s[@"denyFireCooldown"],s[@"denyFireReloading"],s[@"denyFireObstructed"],s[@"denyFireEmpty"],s[@"denyFireSprintRecovery"],s[@"denyProjectileCapacity"],s[@"denyReloadInvalid"],s[@"autoReloadStarted"]];
+    [report appendFormat:@"Validity journal %@ world %@ observatory %@ queue %@ weapon %@ ballistics %@ damage %@ visibility %@ AI %@ audio %@\n",
+        [s[@"journalValid"] boolValue]?@"OK":@"FAIL",[s[@"worldValid"] boolValue]?@"OK":@"FAIL",[s[@"observatoryValid"] boolValue]?@"OK":@"FAIL",[s[@"queueValid"] boolValue]?@"OK":@"FAIL",[s[@"weaponValid"] boolValue]?@"OK":@"FAIL",[s[@"ballisticsValid"] boolValue]?@"OK":@"FAIL",[s[@"damageValid"] boolValue]?@"OK":@"FAIL",[s[@"visibilityValid"] boolValue]?@"OK":@"FAIL",[s[@"tacticalAIValid"] boolValue]?@"OK":@"FAIL",[s[@"audioFXValid"] boolValue]?@"OK":@"FAIL"];
+    [report appendFormat:@"Renderer frames %@ misses %@ CPU avg %.3fms max %.3fms\nTiming lockWait avg %.3fms max %.3fms | coreCritical avg %.3fms max %.3fms | callback avg %.2fms max %.2fms >budget %@ >50ms %@ >100ms %@ >250ms %@ lifecycleResets %@\n",
+        s[@"renderedFrames"],s[@"drawableMisses"],[s[@"renderCpuAverageMs"] doubleValue],[s[@"renderCpuMaxMs"] doubleValue],[s[@"coreLockWaitAverageMs"] doubleValue],[s[@"coreLockWaitMaxMs"] doubleValue],[s[@"coreCriticalAverageMs"] doubleValue],[s[@"coreCriticalMaxMs"] doubleValue],[s[@"callbackGapAverageMs"] doubleValue],[s[@"callbackGapMaxMs"] doubleValue],s[@"callbackGapsOverBudget"],s[@"callbackGapsOver50ms"],s[@"callbackGapsOver100ms"],s[@"callbackGapsOver250ms"],s[@"lifecycleTimingResets"]];
+    [report appendFormat:@"009-H slice window avg %.3fms max %.3fms >20ms %@ (session %@) | projectile contacts %@ terminal %@ target %@ | AI decisions %@\nBlackBox preSpike session %@ causes callback %@ catchUp %@ slice %@ | retained callback %@ catchUp %@ slice %@\n",
+        [s[@"simulationSliceAverageMs"] doubleValue],[s[@"simulationSliceMaxMs"] doubleValue],s[@"windowSimulationSlicesOver20ms"],s[@"simulationSlicesOver20ms"],s[@"projectileContacts"],s[@"projectileTerminalContacts"],s[@"projectileTargetContacts"],s[@"aiDecisions"],s[@"preSpikeBlackBoxFrames"],s[@"preSpikeCallbackFrames"],s[@"preSpikeCatchUpFrames"],s[@"preSpikeSimulationFrames"],s[@"retainedPreSpikeCallbackFrames"],s[@"retainedPreSpikeCatchUpFrames"],s[@"retainedPreSpikeSimulationFrames"]];
+    [report appendFormat:@"Diagnostics hardMask 0x%llx coverageMask 0x%llx (hard bits integrity=1 telemetry=2 callback=4 catchUp=8 slice=10 input=20 presentation=40 fx=80 drawable=100 thermalCritical=200; coverage bits short=1 noAI=2 below32AI=4 noProjectile=8) thermalFallbackFrames %@\nStateHash %@\nJournalHead %@\n",
+        [s[@"diagnosticProblemMask"] unsignedLongLongValue],[s[@"acceptanceCoverageMask"] unsignedLongLongValue],s[@"thermalFallbackFrames"],s[@"stateHash"],s[@"journalHead"]];
+    return report;
 }
 
 - (void)mtkView:(MTKView *)view drawableSizeWillChange:(CGSize)size { (void)view; (void)size; }
@@ -300,8 +385,17 @@ static NSString *METSESquadOrderName(metse::AISquadOrder order) {
     suppressGap = _suppressNextFrameGap;
     _suppressNextFrameGap = NO;
     const double rawGapMs = std::max(0.0, rawDelta * 1000.0);
-    _callbackGapMaxMilliseconds = std::max(_callbackGapMaxMilliseconds, rawGapMs);
-    if (!suppressGap && rawDelta > 0.250) ++_callbackGapsOver250ms;
+    const double callbackBudgetMs = _presentationFPS > 0 ? 1500.0 / static_cast<double>(_presentationFPS) : 25.0;
+    if (!suppressGap) {
+        _callbackGapMaxMilliseconds = std::max(_callbackGapMaxMilliseconds, rawGapMs);
+        ++_callbackSamples;
+        _callbackGapTotalMilliseconds += rawGapMs;
+        if (rawGapMs > callbackBudgetMs) ++_callbackGapsOverBudget;
+        if (rawGapMs > 50.0) ++_callbackGapsOver50ms;
+        if (rawGapMs > 100.0) ++_callbackGapsOver100ms;
+        if (rawGapMs > 250.0) ++_callbackGapsOver250ms;
+        if (_presentationFPS == 30) ++_thermalFallbackFrames;
+    }
     os_unfair_lock_unlock(&_telemetryLock);
     const double simulationDelta = suppressGap ? 0.0 : rawDelta;
 

@@ -90,6 +90,9 @@ void EngineCore::reset() {
         blackBoxWrite_=0;
         blackBoxCount_=0;
         preSpikeBlackBoxFrames_=0;
+        preSpikeCallbackFrames_=0;
+        preSpikeCatchUpFrames_=0;
+        preSpikeSimulationFrames_=0;
         return true;
     });
 }
@@ -494,8 +497,16 @@ void EngineCore::recordBlackBox(double dt,std::uint32_t steps,bool clamped,doubl
     // two fixed simulation steps. Treat only a materially slower callback as a
     // pre-spike signal; catch-up clamp and slow fixed slices remain authoritative.
     const double preSpikeDeltaThreshold=config_.fixedStepSeconds*3.0;
-    frame.preSpike=clamped||dt>preSpikeDeltaThreshold||sliceMilliseconds>20.0;
+    std::uint8_t reasonMask=0;
+    if(dt>preSpikeDeltaThreshold) reasonMask|=kPreSpikeCallbackDelta;
+    if(clamped) reasonMask|=kPreSpikeCatchUpClamp;
+    if(sliceMilliseconds>20.0) reasonMask|=kPreSpikeSimulationSlice;
+    frame.preSpikeReasonMask=reasonMask;
+    frame.preSpike=reasonMask!=0;
     if (frame.preSpike) ++preSpikeBlackBoxFrames_;
+    if ((reasonMask&kPreSpikeCallbackDelta)!=0) ++preSpikeCallbackFrames_;
+    if ((reasonMask&kPreSpikeCatchUpClamp)!=0) ++preSpikeCatchUpFrames_;
+    if ((reasonMask&kPreSpikeSimulationSlice)!=0) ++preSpikeSimulationFrames_;
     blackBox_[blackBoxWrite_]=frame;
     blackBoxWrite_=(blackBoxWrite_+1)%kBlackBoxCapacity;
     blackBoxCount_=std::min(blackBoxCount_+1,kBlackBoxCapacity);
@@ -641,6 +652,15 @@ EngineDiagnostics EngineCore::diagnostics() const noexcept {
     diagnostics.retainedCommands=integrity_.commandCount();
     diagnostics.retainedBlackBoxFrames=blackBoxCount_;
     diagnostics.preSpikeBlackBoxFrames=preSpikeBlackBoxFrames_;
+    diagnostics.preSpikeCallbackFrames=preSpikeCallbackFrames_;
+    diagnostics.preSpikeCatchUpFrames=preSpikeCatchUpFrames_;
+    diagnostics.preSpikeSimulationFrames=preSpikeSimulationFrames_;
+    for(std::size_t i=0;i<blackBoxCount_;++i){
+        const auto& frame=blackBox_[(blackBoxWrite_+kBlackBoxCapacity-blackBoxCount_+i)%kBlackBoxCapacity];
+        if((frame.preSpikeReasonMask&kPreSpikeCallbackDelta)!=0) ++diagnostics.retainedPreSpikeCallbackFrames;
+        if((frame.preSpikeReasonMask&kPreSpikeCatchUpClamp)!=0) ++diagnostics.retainedPreSpikeCatchUpFrames;
+        if((frame.preSpikeReasonMask&kPreSpikeSimulationSlice)!=0) ++diagnostics.retainedPreSpikeSimulationFrames;
+    }
     diagnostics.worldObstacleCount=world_.obstacleCount();
     diagnostics.inputQueueDepth=inputQueue_.size();
     diagnostics.sessionCollisionContacts=sessionCollisionContacts_;
