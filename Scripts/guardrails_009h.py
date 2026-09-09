@@ -34,6 +34,8 @@ require("std::array<BlackBoxFrame,kBlackBoxCapacity>" in engine_h and
         "rolling pre-spike Black Box V2 contract missing")
 require("std::chrono::steady_clock" in engine_cpp,
         "simulation slice timing must use monotonic clock")
+require("preSpikeDeltaThreshold" in engine_cpp and "expected 30 FPS" in engine_cpp,
+        "pre-spike telemetry must not flag the expected 30 FPS fallback")
 require("coreLockWaitAverageMs" in bridge and "callbackGapMaxMs" in bridge,
         "Bridge Observatory lock/callback telemetry missing")
 require("METSE OBSERVATORY V4 / BUILD009-H" in bridge,

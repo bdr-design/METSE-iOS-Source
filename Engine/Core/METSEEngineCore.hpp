@@ -105,6 +105,8 @@ struct BlackBoxFrame {
     std::uint32_t aiActiveAgents = 0;
     std::uint32_t aiLOSAgents = 0;
     std::uint32_t aiDecisions = 0;
+    // True only for a clamped/slow simulation callback, not the expected 30 FPS
+    // presentation fallback (about two 60 Hz fixed steps).
     bool preSpike = false;
 };
 

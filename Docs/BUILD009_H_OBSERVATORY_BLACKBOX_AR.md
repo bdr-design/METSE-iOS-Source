@@ -4,6 +4,7 @@
 
 - Observatory V4 يسجل زمن simulation slice، AI active/LOS/decision counts، وسلسلة projectile contacts.
 - Black Box V2 يحتفظ بسجل rolling ثابت السعة، ويضع `preSpike` على الإطار السابق/المرافق للتأخر أو catch-up clamp أو slice أعلى من 20ms.
+- لا يعتبر fallback العرض الحراري إلى 30 FPS (إطاران من المحاكاة 60 Hz) spike بحد ذاته؛ تبقى clamp أو slice البطيئة أو التأخر المادي هي الإشارات المعتمدة.
 - قياس `_coreLock` وcallback gaps يبقى في Bridge telemetry؛ لا يثبت سبب hitch 1150ms تلقائيًا.
 - لا توجد allocations أو queues جديدة في hot path، ولا تغيير في fixed 60 Hz أو حد 32 combatants.
 - AI projectile damage وPlayer/Team/Faction contract خارج نطاق 009-H.
