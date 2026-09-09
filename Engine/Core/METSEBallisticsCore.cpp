@@ -19,16 +19,25 @@ void observe(ProjectileSegmentObserver observer,
              Vec3 to,
              double speed,
              std::uint64_t correlationId,
+             CombatantId sourceCombatantId,
+             TeamId sourceTeamId,
+             FactionId sourceFactionId,
              bool traversed,
              bool terminated) noexcept {
     if(observer==nullptr) return;
-    observer(context,{from,to,speed,correlationId,traversed,terminated});
+    observer(context,{from,to,speed,correlationId,traversed,terminated,sourceCombatantId,sourceTeamId,sourceFactionId});
 }
 }
 void BallisticsCore::reset() noexcept { projectiles_={}; metrics_={}; }
 bool BallisticsCore::spawn(const ShotSolution& shot) noexcept {
     if (!std::isfinite(shot.muzzleVelocity)||shot.muzzleVelocity<=0.0||!std::isfinite(shot.massKg)||shot.massKg<=0.0||shot.correlationId==0) {++metrics_.rejectedSpawns;return false;}
-    for (auto& p:projectiles_) if(!p.active){p={true,shot.origin,{shot.direction.x*shot.muzzleVelocity,shot.direction.y*shot.muzzleVelocity,shot.direction.z*shot.muzzleVelocity},shot.massKg,0.0,shot.correlationId,0,0};++metrics_.spawned;return true;}
+    for (auto& p:projectiles_) if(!p.active){
+        p={true,shot.origin,{shot.direction.x*shot.muzzleVelocity,shot.direction.y*shot.muzzleVelocity,shot.direction.z*shot.muzzleVelocity},
+           shot.massKg,0.0,shot.correlationId,shot.sourceCombatantId,shot.sourceTeamId,shot.sourceFactionId,
+           shot.targetingPolicy,shot.includePlayerTarget,0,0};
+        ++metrics_.spawned;
+        return true;
+    }
     ++metrics_.rejectedSpawns;return false;
 }
 void BallisticsCore::fixedStep(double dt,
@@ -45,7 +54,8 @@ void BallisticsCore::fixedStep(double dt,
             p.active=false;
             ++metrics_.expired;
             observe(observer,observerContext,terminalPosition,terminalPosition,
-                    std::isfinite(speed)?speed:0.0,p.correlationId,false,true);
+                    std::isfinite(speed)?speed:0.0,p.correlationId,p.sourceCombatantId,p.sourceTeamId,
+                    p.sourceFactionId,false,true);
             continue;
         }
 
@@ -62,13 +72,17 @@ void BallisticsCore::fixedStep(double dt,
                 p.active=false;
                 ++metrics_.expired;
                 observe(observer,observerContext,terminalPosition,terminalPosition,
-                        std::isfinite(speed)?speed:0.0,p.correlationId,false,true);
+                        std::isfinite(speed)?speed:0.0,p.correlationId,p.sourceCombatantId,p.sourceTeamId,
+                        p.sourceFactionId,false,true);
                 break;
             }
             const Vec3 from=p.position;
             const Vec3 to={from.x+p.velocity.x*remainingDt,from.y+p.velocity.y*remainingDt,from.z+p.velocity.z*remainingDt};
             const double energy=0.5*p.massKg*speed*speed;
-            const auto targetHit=damage.traceSegment(from,to);
+            const DamageSource source{{p.sourceCombatantId,p.sourceTeamId,p.sourceFactionId,
+                                       p.sourceCombatantId==CombatantCore::kPlayerId?CombatantRole::Player:CombatantRole::AI},
+                                      p.targetingPolicy,p.includePlayerTarget};
+            const auto targetHit=damage.traceSegment(from,to,source);
             const auto worldHit=world.raycastSegment(from,to);
 
             // Collision truth is nearest-hit wins. A target can never be damaged through
@@ -80,7 +94,8 @@ void BallisticsCore::fixedStep(double dt,
                     p.active=false;
                     ++metrics_.impacts;
                     ++metrics_.targetImpacts;
-                    observe(observer,observerContext,from,p.position,speed,p.correlationId,true,true);
+                    observe(observer,observerContext,from,p.position,speed,p.correlationId,p.sourceCombatantId,
+                            p.sourceTeamId,p.sourceFactionId,true,true);
                     break;
                 }
             }
@@ -88,7 +103,8 @@ void BallisticsCore::fixedStep(double dt,
             if(!worldHit.hit){
                 p.position=to;
                 remainingDt=0.0;
-                observe(observer,observerContext,from,p.position,speed,p.correlationId,true,false);
+                observe(observer,observerContext,from,p.position,speed,p.correlationId,p.sourceCombatantId,
+                        p.sourceTeamId,p.sourceFactionId,true,false);
                 break;
             }
 
@@ -113,7 +129,8 @@ void BallisticsCore::fixedStep(double dt,
                 ++p.penetrations;++metrics_.penetrations;
                 const Vec3 after=normalize(p.velocity);
                 p.position=add(worldHit.exitPoint,mul(after,0.01));
-                observe(observer,observerContext,from,worldHit.point,speed,p.correlationId,true,false);
+                observe(observer,observerContext,from,worldHit.point,speed,p.correlationId,p.sourceCombatantId,
+                        p.sourceTeamId,p.sourceFactionId,true,false);
                 remainingDt*=std::max(0.0,1.0-worldHit.exitT);
                 continue;
             }
@@ -133,7 +150,8 @@ void BallisticsCore::fixedStep(double dt,
                     p.velocity=reflected;
                     ++p.ricochets;++metrics_.ricochets;
                     p.position=add(worldHit.point,mul(normalize(reflected),0.01));
-                    observe(observer,observerContext,from,worldHit.point,speed,p.correlationId,true,false);
+                    observe(observer,observerContext,from,worldHit.point,speed,p.correlationId,p.sourceCombatantId,
+                            p.sourceTeamId,p.sourceFactionId,true,false);
                     remainingDt*=std::max(0.0,1.0-worldHit.t);
                     continue;
                 }
@@ -142,7 +160,8 @@ void BallisticsCore::fixedStep(double dt,
             ++metrics_.terminalWorldImpacts;
             p.position=worldHit.point;
             p.active=false;
-            observe(observer,observerContext,from,p.position,speed,p.correlationId,true,true);
+            observe(observer,observerContext,from,p.position,speed,p.correlationId,p.sourceCombatantId,
+                    p.sourceTeamId,p.sourceFactionId,true,true);
             break;
         }
         if(p.active) p.ageSeconds+=dt;
@@ -163,7 +182,9 @@ bool BallisticsCore::validate() const noexcept {
            !std::isfinite(projectile.velocity.x)||!std::isfinite(projectile.velocity.y)||!std::isfinite(projectile.velocity.z)||
            !std::isfinite(projectile.massKg)||projectile.massKg<=0.0||!std::isfinite(projectile.ageSeconds)||projectile.ageSeconds<0.0||
            projectile.correlationId==0||projectile.penetrations>kMaxPenetrationsPerProjectile||
-           projectile.ricochets>kMaxRicochetsPerProjectile) return false;
+           projectile.ricochets>kMaxRicochetsPerProjectile||
+           (projectile.sourceCombatantId!=0&&(projectile.sourceTeamId==0||projectile.sourceFactionId==0))||
+           (projectile.includePlayerTarget&&projectile.sourceCombatantId==0)) return false;
     }
     return activeCount()<=kMaxProjectiles;
 }
