@@ -4,7 +4,8 @@
 
 تجعل هذه المرحلة دورة حياة المقاتل عقداً صريحاً bounded بدلاً من اشتقاقها
 ضمنياً من عدة طبقات. DamageCore يبقى مالك صحة وإصابة المقاتل، بينما
-CombatantCore ينشر الحالة التشغيلية التي يستهلكها TacticalAI وVisibility وObservatory.
+CombatantCore ينشر مرآة الحالة التشغيلية إلى Observatory؛ يزامن EngineCore أيضاً
+TacticalAI وVisibility من DamageCore مباشرة ويتحقق من اتفاق المرايا، لا من ملكية جديدة للصحة.
 
 ## الحالات
 
@@ -15,7 +16,7 @@ CombatantCore ينشر الحالة التشغيلية التي يستهلكها
 - `Removed`: حالة محجوزة لإزالة مقاتل في جولة لاحقة؛ لا تسمح بإعادة استعمال slot
   أو إخفاء انتقال الحالة داخل طبقة العرض.
 
-كل انتقال يمر من `CombatantCore::syncLifecycle` ويخضع لـ`validate()`، ويظهر في
+مزامنة runtime تمر من `CombatantCore::syncLifecycle` وتخضع لـ`validate()`، وتظهر في
 تقرير ثابت الحجم يدخل في `EngineDiagnostics` وObservatory. الحالة تدخل أيضاً في
 `deterministicStateHash` حتى لا تتباعد سيناريوهات replay.
 
@@ -33,3 +34,13 @@ CombatantCore ينشر الحالة التشغيلية التي يستهلكها
 - counters lifecycle ثابتة وموجودة في Observatory.
 - deterministic hash يتغير عند اختلاف lifecycle.
 - اختبارات Build 009 و010-A تبقى خضراء.
+
+## تدقيق ما قبل 010-C
+
+- تُرفض قيم enum غير الصالحة والهوية المكررة وتهيئة slot تترك فجوة قبلها دون mutation.
+- Dead لا يعود حياً عبر sync؛ يمكن أن يبقى Dead أو يصبح Removed فقط. Removed نهائية
+  ضمن عمر الهوية. `configure`/`reset` مسار تهيئة صريح وليس إعادة إحياء أثناء القتال.
+- `syncState` يستخدم نفس بوابة `syncLifecycle` ولا يتجاوزها؛ EngineCore لا يكتب المرآة مرتين.
+- اختبارات الحتمية تقارن محركين مستقلين في كل شريحة، وتختبر rollback ورفض الانتقالات.
+- Removed مختبرة في النواة فقط: لا spawn/reuse أو تعزيزات أو أحداث squad/mission مضافة
+  في 010-B. هذه وظائف لاحقة بعقود مستقلة، وليست قبولاً منجزاً لهذه المرحلة.

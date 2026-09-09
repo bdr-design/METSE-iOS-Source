@@ -206,12 +206,20 @@ public:
 
 #ifdef METSE_TESTING
     bool testOnlyExecuteInvariantViolation();
+    void testOnlyFailNextSimulationSlice() noexcept { failNextSimulationSlice_=true; }
     void testOnlySetAirborne(double h,double vy) noexcept;
-    bool testOnlySpawnProjectile(const ShotSolution& shot) noexcept { return ballistics_.spawn(shot); }
+    bool testOnlySpawnProjectile(const ShotSolution& shot) noexcept {
+        const bool accepted=ballistics_.spawn(shot);
+        syncSnapshot();
+        return accepted;
+    }
     bool testOnlyNewestIntegrityEvent(std::size_t offset,EventRecord& out) const noexcept { return integrity_.newestEvent(offset,out); }
 #endif
 
 private:
+#ifdef METSE_TESTING
+    bool failNextSimulationSlice_=false;
+#endif
     struct MutationCheckpoint {
         EngineSnapshot state{};
         CharacterMotor character{};

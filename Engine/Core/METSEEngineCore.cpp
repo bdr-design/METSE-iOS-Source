@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -24,21 +25,28 @@ CombatantLifecycleState lifecycleFor(CombatState state) noexcept {
 struct AudioProjectileObserverContext {
     AudioFXCore *audio=nullptr;
     Vec3 listener{};
-    bool hostileToListener=false;
+    TacticalAICore *tacticalAI=nullptr;
+    const CombatantCore *combatants=nullptr;
+    const WorldCollisionCore *world=nullptr;
 };
 
 void observeProjectileForAudio(void *rawContext,
                                const ProjectileSegmentObservation& segment) noexcept {
     auto *context=static_cast<AudioProjectileObserverContext *>(rawContext);
     if(context==nullptr||context->audio==nullptr) return;
-    const bool derivedHostile=segment.sourceCombatantId!=0&&
-                              segment.sourceCombatantId!=CombatantCore::kPlayerId;
-    context->audio->observeProjectileSegment(segment,context->listener,
-                                              context->hostileToListener||derivedHostile);
+    const auto* source=context->combatants?context->combatants->recordById(segment.sourceCombatantId):nullptr;
+    const auto* listener=context->combatants?context->combatants->recordById(CombatantCore::kPlayerId):nullptr;
+    const bool derivedHostile=source&&listener&&source->identity.teamId==segment.sourceTeamId&&
+        source->identity.factionId==segment.sourceFactionId&&
+        CombatantCore::relation(source->identity,listener->identity)==TargetRelation::Hostile;
+    context->audio->observeProjectileSegment(segment,context->listener,derivedHostile);
+    if(context->tacticalAI&&context->combatants&&context->world)
+        context->tacticalAI->observeProjectileSegment(segment,*context->combatants,*context->world);
 }
 
 template<std::size_t N>
 void put64(std::array<std::uint8_t,N>& buffer,std::size_t& cursor,std::uint64_t value) noexcept {
+    assert(cursor+8<=N);
     if(cursor+8>N) return;
     for(int i=7;i>=0;--i) buffer[cursor++]=static_cast<std::uint8_t>(value>>(i*8));
 }
@@ -270,13 +278,11 @@ void EngineCore::initializeCombatantAuthority() noexcept {
 
 void EngineCore::syncTacticalAICombatState() noexcept {
     const auto& player=damage_.playerTarget();
-    (void)combatants_.syncState(0,player.id,player.alive,DamageCore::combatCapable(player),player.alive);
     (void)combatants_.syncLifecycle(0,player.id,lifecycleFor(player.combatState),player.alive);
     const std::size_t count=std::min(damage_.targetCount(),tacticalAI_.agentCount());
     for(std::size_t i=0;i<count;++i){
         const auto& target=damage_.targets()[i];
         tacticalAI_.syncAgentCombatState(i,target.id,target.alive,DamageCore::combatCapable(target),target.health/100.0);
-        (void)combatants_.syncState(i+1u,target.id,target.alive,DamageCore::combatCapable(target),target.alive);
         (void)combatants_.syncLifecycle(i+1u,target.id,lifecycleFor(target.combatState),target.alive);
     }
 }
@@ -368,7 +374,7 @@ void EngineCore::fixedStep() noexcept {
     // Segment observation consumes projectile provenance. Player shots remain
     // non-hostile to the player listener; AI shots derive hostile status from their
     // CombatantCore identity in the bounded observer callback.
-    AudioProjectileObserverContext projectileAudio{&audioFX_,cameraPosition(),false};
+    AudioProjectileObserverContext projectileAudio{&audioFX_,cameraPosition(),&tacticalAI_,&combatants_,&world_};
     // Tactical locomotion is advanced before projectile tracing. Its accepted position
     // is mirrored one-way into DamageCore, keeping ballistic target truth aligned with
     // the simulation-owned AI position without introducing a second movement owner.
@@ -404,6 +410,12 @@ void EngineCore::fixedStep() noexcept {
     ++state_.simulationTick;
     syncSnapshot();
 
+#ifdef METSE_TESTING
+    if(failNextSimulationSlice_){
+        failNextSimulationSlice_=false;
+        damageLedgerValid=false;
+    }
+#endif
     if(!aiShotMutationValid || !damageLedgerValid || !validateInvariants()){
         state_=stateCheckpoint;
         character_=characterCheckpoint;
@@ -531,6 +543,10 @@ bool EngineCore::validateInvariants() const noexcept {
        state_.activeProjectiles!=ballistics_.activeCount() || state_.damageHits!=damage_.totalHits() || state_.damageKills!=damage_.totalKills() ||
        state_.damageIncapacitations!=damage_.totalIncapacitations() || state_.tacticalAI.activeAgents!=ai.activeAgents ||
        state_.tacticalAI.engagedAgents!=ai.engagedAgents || state_.tacticalAI.decisionsExecuted!=ai.decisionsExecuted ||
+       state_.tacticalAI.suppressedAgents!=ai.suppressedAgents ||
+       state_.tacticalAI.suppressionChecksThisStep!=ai.suppressionChecksThisStep ||
+       state_.tacticalAI.suppressionObservations!=ai.suppressionObservations ||
+       state_.tacticalAI.suppressionBudgetDrops!=ai.suppressionBudgetDrops ||
        state_.visibility.full!=visibility.full || state_.visibility.reduced!=visibility.reduced ||
        state_.visibility.minimal!=visibility.minimal || state_.visibility.dormant!=visibility.dormant ||
        state_.visibility.evaluated!=visibility.evaluated || state_.visibility.occluded!=visibility.occluded ||
@@ -669,7 +685,12 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     // The hash buffer is fixed and deliberately oversized for the complete bounded
     // 32-agent tactical state. It performs no allocation and makes the deterministic
     // regression sensitive to action/memory/locomotion drift, not just player state.
-    std::array<std::uint8_t,16384> buffer{};
+    // Conservative word budgets per bounded pool, including maximum projectile
+    // occupancy. The old 16 KiB capacity silently omitted the tail at saturation.
+    constexpr std::size_t hashWords=128+4*VisibilityCore::kMaxEntities+
+        16*DamageCore::kMaxTargets+20*BallisticsCore::kMaxProjectiles+
+        64*TacticalAICore::kMaxAgents+8*CombatantCore::kMaxCombatants;
+    std::array<std::uint8_t,hashWords*8> buffer{};
     std::size_t cursor=0;
     put64(buffer,cursor,state_.simulationTick);
     putD(buffer,cursor,state_.simulationSeconds);
@@ -721,8 +742,15 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         put64(buffer,cursor,static_cast<std::uint64_t>(projectile.targetingPolicy));
         put64(buffer,cursor,projectile.includePlayerTarget?1u:0u);
         putD(buffer,cursor,projectile.position.x); putD(buffer,cursor,projectile.position.y); putD(buffer,cursor,projectile.position.z);
+        putD(buffer,cursor,projectile.velocity.x); putD(buffer,cursor,projectile.velocity.y); putD(buffer,cursor,projectile.velocity.z);
+        putD(buffer,cursor,projectile.massKg); putD(buffer,cursor,projectile.ageSeconds);
+        put64(buffer,cursor,projectile.penetrations); put64(buffer,cursor,projectile.ricochets);
     }
     put64(buffer,cursor,tacticalAI_.agentCount());
+    const auto suppressionReport=tacticalAI_.report();
+    put64(buffer,cursor,suppressionReport.suppressionChecksThisStep);
+    put64(buffer,cursor,suppressionReport.suppressionObservations);
+    put64(buffer,cursor,suppressionReport.suppressionBudgetDrops);
     for(std::size_t i=0;i<tacticalAI_.agentCount();++i){
         const auto& agent=tacticalAI_.agents()[i];
         put64(buffer,cursor,agent.id);
@@ -738,6 +766,8 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         putD(buffer,cursor,agent.confidence);
         putD(buffer,cursor,agent.threat);
         putD(buffer,cursor,agent.health01);
+        putD(buffer,cursor,agent.suppression01);
+        put64(buffer,cursor,agent.lastSuppressionCorrelationId);
         put64(buffer,cursor,agent.actionSequence);
         put64(buffer,cursor,agent.squadSourceAgentId);
         put64(buffer,cursor,agent.coverCandidateIndex);
@@ -766,6 +796,8 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     put64(buffer,cursor,playerTarget.teamId); put64(buffer,cursor,playerTarget.factionId);
     putD(buffer,cursor,playerTarget.position.x); putD(buffer,cursor,playerTarget.position.y); putD(buffer,cursor,playerTarget.position.z);
     putD(buffer,cursor,playerTarget.health); putD(buffer,cursor,playerTarget.bleedingPerSecond);
+    putD(buffer,cursor,playerTarget.helmetArmorJoules); putD(buffer,cursor,playerTarget.torsoArmorJoules);
+    put64(buffer,cursor,playerTarget.lastDamageCorrelationId);
     put64(buffer,cursor,static_cast<std::uint64_t>(playerTarget.combatState));
     put64(buffer,cursor,playerTarget.alive?1u:0u);
     for(std::size_t i=0;i<combatants_.count();++i){
