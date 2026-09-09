@@ -18,6 +18,7 @@ obs_h = text("Engine/Core/METSEObservatoryCore.hpp")
 obs_cpp = text("Engine/Core/METSEObservatoryCore.cpp")
 tests = text("Tests/EngineCoreTests.cpp")
 bridge = text("Engine/Platform/Apple/METSEEngineBridge.mm")
+ui = text("iOS/METSE/ObservatoryViewController.swift")
 runner = text("Scripts/test_engine_core.sh")
 doc = text("Docs/BUILD009_H_OBSERVATORY_BLACKBOX_AR.md")
 
@@ -36,14 +37,27 @@ require("std::chrono::steady_clock" in engine_cpp,
         "simulation slice timing must use monotonic clock")
 require("preSpikeDeltaThreshold" in engine_cpp and "expected 30 FPS" in engine_cpp,
         "pre-spike telemetry must not flag the expected 30 FPS fallback")
+require("preSpikeReasonMask" in engine_h and "preSpikeCallbackFrames" in engine_cpp and
+        "retainedPreSpikeSimulationFrames" in engine_cpp,
+        "Black Box spike cause attribution is missing")
+require("rejectedSamples" in obs_h and "retainedRealSeconds" in obs_cpp and
+        "windowFramesOver20ms" in obs_cpp and "simulationTickRegressions" in obs_cpp,
+        "Observatory session/window validity telemetry is missing")
 require("coreLockWaitAverageMs" in bridge and "callbackGapMaxMs" in bridge,
         "Bridge Observatory lock/callback telemetry missing")
+require("callbackGapsOverBudget" in bridge and "thermalFallbackFrames" in bridge and
+        "diagnosticProblemMask" in bridge and "acceptanceCoverageMask" in bridge,
+        "Bridge timing attribution and coverage report are missing")
+require("Problems / Coverage" in ui and "telemetryRejectedSamples" in ui and
+        "THERMAL FALLBACK" in ui,
+        "Observatory UI must expose problem/coverage attribution")
 require("METSE OBSERVATORY V4 / BUILD009-H" in bridge,
         "Bridge Observatory report must identify the 009-H schema")
-for token in ("maxSimulationSliceMilliseconds", "simulationSlicesOver20ms", "projectileContacts", "aiDecisions", "preSpike"):
+for token in ("maxSimulationSliceMilliseconds", "simulationSlicesOver20ms", "projectileContacts", "aiDecisions", "preSpike", "windowFramesOver20ms", "preSpikeReasonMask", "rejectedSamples"):
     require(token in tests, f"009-H regression coverage missing: {token}")
 require("Tests/EngineCoreTests.cpp" in runner, "009-H observatory regression must run")
-require("Observatory V4" in doc and "Black Box V2" in doc, "009-H documentation missing")
+require("Observatory V4" in doc and "Black Box V2" in doc and "session/window" in doc and "سبب" in doc,
+        "009-H documentation missing precision telemetry contract")
 
 if errors:
     print("BUILD 009-H OBSERVATORY/BLACK BOX GUARDRAILS: FAIL")

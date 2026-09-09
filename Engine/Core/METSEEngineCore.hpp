@@ -105,6 +105,8 @@ struct BlackBoxFrame {
     std::uint32_t aiActiveAgents = 0;
     std::uint32_t aiLOSAgents = 0;
     std::uint32_t aiDecisions = 0;
+    // Bitmask: 1 callback delta, 2 catch-up clamp, 4 slow fixed slice.
+    std::uint8_t preSpikeReasonMask = 0;
     // True only for a clamped/slow simulation callback, not the expected 30 FPS
     // presentation fallback (about two 60 Hz fixed steps).
     bool preSpike = false;
@@ -124,6 +126,12 @@ struct EngineDiagnostics {
     std::size_t retainedCommands = 0;
     std::size_t retainedBlackBoxFrames = 0;
     std::uint64_t preSpikeBlackBoxFrames = 0;
+    std::uint64_t retainedPreSpikeCallbackFrames = 0;
+    std::uint64_t retainedPreSpikeCatchUpFrames = 0;
+    std::uint64_t retainedPreSpikeSimulationFrames = 0;
+    std::uint64_t preSpikeCallbackFrames = 0;
+    std::uint64_t preSpikeCatchUpFrames = 0;
+    std::uint64_t preSpikeSimulationFrames = 0;
     std::size_t worldObstacleCount = 0;
     std::size_t inputQueueDepth = 0;
     std::uint64_t sessionCollisionContacts = 0;
@@ -148,6 +156,11 @@ struct EngineDiagnostics {
 class EngineCore final {
 public:
     static constexpr std::size_t kBlackBoxCapacity = 720;
+    enum : std::uint8_t {
+        kPreSpikeCallbackDelta = 1u << 0,
+        kPreSpikeCatchUpClamp = 1u << 1,
+        kPreSpikeSimulationSlice = 1u << 2
+    };
     explicit EngineCore(EngineConfig config = {});
     void reset();
     void advance(double realDeltaSeconds);
@@ -283,6 +296,9 @@ private:
     std::size_t blackBoxWrite_ = 0;
     std::size_t blackBoxCount_ = 0;
     std::uint64_t preSpikeBlackBoxFrames_ = 0;
+    std::uint64_t preSpikeCallbackFrames_ = 0;
+    std::uint64_t preSpikeCatchUpFrames_ = 0;
+    std::uint64_t preSpikeSimulationFrames_ = 0;
     std::uint64_t observedProjectileContacts_ = 0;
     std::uint64_t observedProjectileTerminalContacts_ = 0;
     std::uint64_t observedProjectileTargetContacts_ = 0;
