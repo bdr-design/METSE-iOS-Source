@@ -65,8 +65,12 @@ jobs:
         run: python3 Scripts/guardrails_010c.py
       - name: Build 010-D Injury/Local Team Reaction guardrails
         run: python3 Scripts/guardrails_010d.py
+      - name: Build 010-E telemetry capture guardrails
+        run: python3 Scripts/guardrails_010e.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
+      - name: Two simulated hours deterministic host soak
+        run: bash Scripts/test_engine_soak.sh 7200
       - name: Swift syntax fast gate
         shell: bash
         run: |

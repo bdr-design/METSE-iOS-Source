@@ -12,6 +12,7 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: "0.3.0"
     CURRENT_PROJECT_VERSION: "8"
+    METSE_SOURCE_COMMIT: "UNSTAMPED"
 targets:
   METSE:
     type: application

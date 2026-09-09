@@ -250,28 +250,34 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
 }
 
 - (NSString *)statusString {
-    metse::EngineCore coreCopy;
     os_unfair_lock_lock(&_coreLock);
-    coreCopy = _core;
+    const auto state = _core.snapshot();
     os_unfair_lock_unlock(&_coreLock);
-    const auto state = coreCopy.snapshot();
-    const auto diagnostics = coreCopy.diagnostics();
-    return [NSString stringWithFormat:@"%@/%@ %.1fm/s • %u/%u • ADS %.0f%% • P %u • AI %u • JRN %@ • BB %llu",
+    return [NSString stringWithFormat:@"%@/%@ %.1fm/s • %u/%u • ADS %.0f%% • P %u • AI %u",
             METSEStanceName(state.stance), METSEGaitName(state.gait), state.horizontalSpeed,
             state.ammoInMagazine, state.reserveAmmo, state.adsAlpha * 100.0,
-            state.activeProjectiles, state.tacticalAI.engagedAgents,
-            diagnostics.journalValid ? @"OK" : @"FAIL", (unsigned long long)diagnostics.retainedBlackBoxFrames];
+            state.activeProjectiles, state.tacticalAI.engagedAgents];
+}
+
+- (NSString *)stanceName {
+    os_unfair_lock_lock(&_coreLock);
+    const auto stance = _core.snapshot().stance;
+    os_unfair_lock_unlock(&_coreLock);
+    return METSEStanceName(stance);
 }
 
 - (NSDictionary<NSString *, id> *)observatorySnapshot {
-    // Copy the bounded core under the live lock, then perform percentile sorting and
-    // journal verification away from render ownership.
-    metse::EngineCore coreCopy;
+    // Capture only diagnostics inputs; expensive verification stays outside ownership.
+    metse::EngineDiagnosticsCapture capture;
+    const double captureStart = CACurrentMediaTime();
     os_unfair_lock_lock(&_coreLock);
-    coreCopy = _core;
+    const double captureAcquired = CACurrentMediaTime();
+    _core.captureDiagnostics(capture);
     os_unfair_lock_unlock(&_coreLock);
-    const auto s = coreCopy.snapshot();
-    const auto d = coreCopy.diagnostics();
+    const double captureEnd = CACurrentMediaTime();
+    const auto s = capture.snapshot;
+    const auto d = capture.finish();
+    const double finishEnd = CACurrentMediaTime();
     const auto o = d.observatory;
     const auto stateHash = metse::sha256Hex(d.stateHash);
     const auto journalHead = metse::sha256Hex(d.journalHead);
@@ -320,9 +326,17 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     uint64_t coverageMask = 0;
     if(o.observedRealSeconds<300.0) coverageMask |= kCoverageShortRun;
     if(o.peakAIActiveAgents==0) coverageMask |= kCoverageNoAI;
-    else if(o.peakAIActiveAgents<metse::TacticalAICore::kMaxAgents) coverageMask |= kCoverageBelow32AI;
+    if(o.fullCombatantLoadSeconds<=0.0) coverageMask |= kCoverageBelow32AI;
     if(d.ballistics.spawned==0) coverageMask |= kCoverageNoProjectile;
     return @{
+        @"diagnosticCaptureWaitMs":@((captureAcquired-captureStart)*1000.0),
+        @"diagnosticCaptureMs":@((captureEnd-captureAcquired)*1000.0),
+        @"diagnosticFinishMs":@((finishEnd-captureEnd)*1000.0),
+        @"diagnosticCaptureBytes":@(sizeof(metse::EngineDiagnosticsCapture)),
+        @"engineCoreBytes":@(sizeof(metse::EngineCore)),
+        @"fullCombatantLoadSeconds":@(o.fullCombatantLoadSeconds),
+        @"combinedLoadSeconds":@(o.combinedLoadSeconds),
+        @"sourceCommit":NSBundle.mainBundle.infoDictionary[@"METSESourceCommit"] ?: @"UNSTAMPED",
         @"version":@"0.3.0", @"build":@8, @"presentationFPS":@(presentationFPS),
         @"thermalState":METSEThermalStateName(thermalState), @"thermalFallbackActive":@(presentationFPS==30),
         @"thermalFallbackFrames":@(thermalFallbackFrames),
@@ -416,7 +430,9 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
         s[@"lifecycleWillResignActive"],s[@"lifecycleDidEnterBackground"],s[@"lifecycleWillEnterForeground"],s[@"lifecycleDidBecomeActive"],s[@"memoryWarningEvents"]];
     [report appendFormat:@"009-H slice window avg %.3fms max %.3fms >20ms %@ (session %@) | projectile contacts %@ terminal %@ target %@ | AI decisions %@\nBlackBox preSpike session %@ causes callback %@ catchUp %@ slice %@ | retained callback %@ catchUp %@ slice %@\n",
         [s[@"simulationSliceAverageMs"] doubleValue],[s[@"simulationSliceMaxMs"] doubleValue],s[@"windowSimulationSlicesOver20ms"],s[@"simulationSlicesOver20ms"],s[@"projectileContacts"],s[@"projectileTerminalContacts"],s[@"projectileTargetContacts"],s[@"aiDecisions"],s[@"preSpikeBlackBoxFrames"],s[@"preSpikeCallbackFrames"],s[@"preSpikeCatchUpFrames"],s[@"preSpikeSimulationFrames"],s[@"retainedPreSpikeCallbackFrames"],s[@"retainedPreSpikeCatchUpFrames"],s[@"retainedPreSpikeSimulationFrames"]];
-    [report appendFormat:@"Diagnostics hardMask 0x%llx coverageMask 0x%llx (hard bits integrity=1 telemetry=2 callback=4 catchUp=8 slice=10 input=20 presentation=40 fx=80 drawable=100 thermalCritical=200 memory=400; coverage bits short=1 noAI=2 below32AI=4 noProjectile=8) thermalFallbackFrames %@\nStateHash %@\nJournalHead %@\n",
+    [report appendFormat:@"Source %@\n010-E capture wait %@ms held %@ms finish %@ms | capture %@ bytes / core %@ bytes\nLoad coverage: 31 capable AI + capable player %.2fs; with >=64 projectiles %.2fs (not device certification)\n",
+        s[@"sourceCommit"],s[@"diagnosticCaptureWaitMs"],s[@"diagnosticCaptureMs"],s[@"diagnosticFinishMs"],s[@"diagnosticCaptureBytes"],s[@"engineCoreBytes"],[s[@"fullCombatantLoadSeconds"] doubleValue],[s[@"combinedLoadSeconds"] doubleValue]];
+    [report appendFormat:@"Diagnostics hardMask 0x%llx coverageMask 0x%llx (hard bits integrity=1 telemetry=2 callback=4 catchUp=8 slice=10 input=20 presentation=40 fx=80 drawable=100 thermalCritical=200 memory=400; coverage bits short=1 noAI=2 noFull32Load=4 noProjectile=8) thermalFallbackFrames %@\nStateHash %@\nJournalHead %@\n",
         [s[@"diagnosticProblemMask"] unsignedLongLongValue],[s[@"acceptanceCoverageMask"] unsignedLongLongValue],s[@"thermalFallbackFrames"],s[@"stateHash"],s[@"journalHead"]];
     return report;
 }

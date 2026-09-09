@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 namespace metse {
-struct ObservatoryFrameInput{std::uint64_t simulationTick=0;double realDeltaSeconds=0,simulationSliceMilliseconds=0,playerX=0,playerZ=0,horizontalSpeed=0;CharacterStance stance=CharacterStance::Standing;CharacterGait gait=CharacterGait::Idle;bool grounded=true,sprinting=false;std::uint32_t catchUpSteps=0;bool catchUpClamped=false;std::uint32_t collisionContacts=0,inputQueueDepth=0,activeProjectiles=0,visibilityFull=0,visibilityReduced=0,visibilityMinimal=0,visibilityDormant=0,aiActiveAgents=0,aiLOSAgents=0,aiDecisions=0;std::uint64_t projectileContacts=0,projectileTerminalContacts=0,projectileTargetContacts=0;std::uint32_t ammoInMagazine=0,reserveAmmo=0;double adsAlpha=0;bool reloading=false,weaponObstructed=false;};
+struct ObservatoryFrameInput{std::uint64_t simulationTick=0;double realDeltaSeconds=0,simulationSliceMilliseconds=0,playerX=0,playerZ=0,horizontalSpeed=0;CharacterStance stance=CharacterStance::Standing;CharacterGait gait=CharacterGait::Idle;bool grounded=true,sprinting=false;std::uint32_t catchUpSteps=0;bool catchUpClamped=false;std::uint32_t collisionContacts=0,inputQueueDepth=0,activeProjectiles=0,visibilityFull=0,visibilityReduced=0,visibilityMinimal=0,visibilityDormant=0,aiActiveAgents=0,aiLOSAgents=0,aiDecisions=0;std::uint64_t projectileContacts=0,projectileTerminalContacts=0,projectileTargetContacts=0;std::uint32_t ammoInMagazine=0,reserveAmmo=0;double adsAlpha=0;bool reloading=false,weaponObstructed=false;std::uint32_t configuredCombatants=0;bool playerCombatCapable=false;};
 struct ObservatoryFrame{std::uint64_t simulationTick=0;double frameMilliseconds=0,simulationSliceMilliseconds=0,horizontalSpeed=0;std::uint32_t catchUpSteps=0,collisionContacts=0,inputQueueDepth=0,activeProjectiles=0,aiActiveAgents=0,aiLOSAgents=0,aiDecisions=0;std::uint64_t projectileContacts=0,projectileTerminalContacts=0,projectileTargetContacts=0;CharacterStance stance=CharacterStance::Standing;CharacterGait gait=CharacterGait::Idle;bool grounded=true,sprinting=false,catchUpClamped=false;};
 struct ObservatoryReport {
     std::uint64_t observedFrames=0;
@@ -14,6 +14,8 @@ struct ObservatoryReport {
     std::uint64_t rejectedRangeSamples=0;
     std::uint64_t simulationTickRegressions=0;
     double observedRealSeconds=0;
+    // Conservative accepted simulation coverage, not device endurance certification.
+    double fullCombatantLoadSeconds=0,combinedLoadSeconds=0;
     double retainedRealSeconds=0;
     std::uint64_t retainedSimulationTicks=0;
     double sessionAverageFrameMilliseconds=0;
@@ -55,6 +57,7 @@ private:
     std::uint64_t framesOver20ms_=0,framesOver33ms_=0,simulationSlicesOver20ms_=0,catchUpClampedFrames_=0;
     std::uint64_t totalCollisionContacts_=0,totalProjectileContacts_=0,totalProjectileTerminalContacts_=0,totalProjectileTargetContacts_=0;
     double observedRealSeconds_=0,sessionFrameTotalMilliseconds_=0,simulationSliceTotalMilliseconds_=0,maxSimulationSliceMilliseconds_=0;
+    double fullCombatantLoadSeconds_=0,combinedLoadSeconds_=0;
     double distanceTravelled_=0,peakHorizontalSpeed_=0,sprintSeconds_=0,airborneSeconds_=0,standingSeconds_=0,crouchedSeconds_=0,proneSeconds_=0;
     std::uint64_t stanceTransitions_=0,gaitTransitions_=0;
     bool hasPreviousPosition_=false,hasPreviousTick_=false;

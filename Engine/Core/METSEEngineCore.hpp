@@ -167,6 +167,21 @@ struct EngineDiagnostics {
     bool audioFXValid = false;
 };
 
+// Read-only, bounded capture. Expensive hashing/journal/percentile work runs
+// after releasing platform ownership; no world, AI or Black Box copy.
+class EngineDiagnosticsCapture final {
+public:
+    EngineSnapshot snapshot{};
+    [[nodiscard]] EngineDiagnostics finish() const noexcept;
+private:
+    friend class EngineCore;
+    EngineDiagnostics base_{};
+    ObservatoryCore observatory_{};
+    IntegrityCore integrity_{};
+    std::array<std::uint8_t,49152> stateBytes_{};
+    std::size_t stateByteCount_=0;
+};
+
 class EngineCore final {
 public:
     static constexpr std::size_t kBlackBoxCapacity = 720;
@@ -176,6 +191,8 @@ public:
         kPreSpikeSimulationSlice = 1u << 2
     };
     explicit EngineCore(EngineConfig config = {});
+    EngineCore(const EngineCore&)=delete;
+    EngineCore& operator=(const EngineCore&)=delete;
     void reset();
     void advance(double realDeltaSeconds);
     bool setActiveCombatants(std::uint32_t count);
@@ -191,6 +208,7 @@ public:
     [[nodiscard]] const EngineSnapshot& snapshot() const noexcept { return state_; }
     [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
     [[nodiscard]] EngineDiagnostics diagnostics() const noexcept;
+    void captureDiagnostics(EngineDiagnosticsCapture& out) const noexcept;
     [[nodiscard]] bool newestBlackBoxFrame(std::size_t offset,BlackBoxFrame& out) const noexcept;
     [[nodiscard]] const std::array<WorldObstacle,WorldCollisionCore::kMaxObstacles>& worldObstacles() const noexcept { return world_.obstacles(); }
     [[nodiscard]] std::size_t worldObstacleCount() const noexcept { return world_.obstacleCount(); }
@@ -217,6 +235,7 @@ public:
 #endif
 
 private:
+    std::size_t serializeState(std::array<std::uint8_t,49152>& buffer) const noexcept;
 #ifdef METSE_TESTING
     bool failNextSimulationSlice_=false;
 #endif

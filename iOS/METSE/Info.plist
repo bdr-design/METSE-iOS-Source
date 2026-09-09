@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>METSESourceCommit</key>
+    <string>$(METSE_SOURCE_COMMIT)</string>
     <key>CFBundleDisplayName</key>
     <string>METSE</string>
     <key>CFBundleExecutable</key>
