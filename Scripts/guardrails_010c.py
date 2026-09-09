@@ -69,6 +69,8 @@ for name in ("boundariesAndKnowledge", "identityAndWalls", "terminationAndTrajec
     require(name + "();" in tests, f"missing executed regression: {name}")
 require("Tests/TacticalSuppressionTests.cpp" in read("Scripts/test_engine_core.sh"), "suite not wired")
 workflow = read(".github/workflows/build-ios-unsigned.yml")
+require("ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow,
+        "PR gates must check out exact head SHA, not synthetic merge ref")
 require("python3 Scripts/guardrails_010c.py" in workflow and
         workflow.index("python3 Scripts/guardrails_010c.py") < workflow.index("bash Scripts/test_engine_core.sh"),
         "010-C guardrail must precede strict tests")

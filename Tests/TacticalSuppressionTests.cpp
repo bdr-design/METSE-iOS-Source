@@ -54,6 +54,17 @@ void boundariesAndKnowledge() {
     assert(ai.agents()[0].lastSuppressionCorrelationId==0);
     assert(ai.validate());
 
+    TacticalAICore threshold;
+    assert(threshold.syncAgent(0,enemy.id,{5,0,0},0,true));
+    threshold.observeProjectileSegment(segment(),authority,world);
+    // Exact representable decay probes the inclusive threshold independently of
+    // accumulated floating-point rounding in repeated 60 Hz steps.
+    threshold.fixedStep(0.5,world,{-44,0,44},{},0.0);
+    assert(threshold.agents()[0].suppression01==TacticalAICore::kSuppressionThreshold);
+    assert(threshold.report().suppressedAgents==1);
+    threshold.fixedStep(1.0/60.0,world,{-44,0,44},{},0.0);
+    assert(threshold.report().suppressedAgents==0);
+
     // Pressure must not grant fire authorization even with fresh Vision.
     assert(ai.syncAgent(0,enemy.id,{5,0,0},0,true));
     ai.observeProjectileSegment(segment(),authority,world);
@@ -166,9 +177,10 @@ void budgetStressAndRollback() {
     }
     assert(ai.report().suppressionBudgetDrops>0);
 
-    EngineCore engine;
+    EngineCore engine,control;
     auto near=shot({-9,1.15,16}); near.muzzleVelocity=120;
     assert(engine.testOnlySpawnProjectile(near));
+    assert(control.testOnlySpawnProjectile(near));
     const auto before=engine.deterministicStateHash();
     engine.testOnlyFailNextSimulationSlice();
     engine.advance(1.0/60.0);
@@ -176,8 +188,14 @@ void budgetStressAndRollback() {
     assert(engine.deterministicStateHash()==before);
     assert(engine.tacticalAI().report().suppressionObservations==0);
     engine.advance(1.0/60.0);
+    control.advance(1.0/60.0);
     assert(engine.tacticalAI().report().suppressionObservations>0);
     assert(engine.tacticalAI().validate());
+    assert(engine.deterministicStateHash()==control.deterministicStateHash());
+    for(int i=0;i<120;++i){
+        engine.advance(1.0/60.0); control.advance(1.0/60.0);
+        assert(engine.deterministicStateHash()==control.deterministicStateHash());
+    }
 }
 
 void saturatedHashSensitivity() {
