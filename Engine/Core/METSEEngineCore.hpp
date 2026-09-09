@@ -98,6 +98,14 @@ struct BlackBoxFrame {
     bool sprinting = false;
     bool reloading = false;
     bool catchUpClamped = false;
+    double simulationSliceMilliseconds = 0.0;
+    std::uint64_t projectileContacts = 0;
+    std::uint64_t projectileTerminalContacts = 0;
+    std::uint64_t projectileTargetContacts = 0;
+    std::uint32_t aiActiveAgents = 0;
+    std::uint32_t aiLOSAgents = 0;
+    std::uint32_t aiDecisions = 0;
+    bool preSpike = false;
 };
 
 struct EngineDiagnostics {
@@ -113,6 +121,7 @@ struct EngineDiagnostics {
     std::size_t retainedEvents = 0;
     std::size_t retainedCommands = 0;
     std::size_t retainedBlackBoxFrames = 0;
+    std::uint64_t preSpikeBlackBoxFrames = 0;
     std::size_t worldObstacleCount = 0;
     std::size_t inputQueueDepth = 0;
     std::uint64_t sessionCollisionContacts = 0;
@@ -246,8 +255,8 @@ private:
     void mirrorTacticalPositionsToDamage() noexcept;
     void syncSnapshot() noexcept;
     bool validateInvariants() const noexcept;
-    void recordBlackBox(double dt,std::uint32_t steps,bool clamped) noexcept;
-    void observeFrame(double dt,std::uint32_t steps,bool clamped) noexcept;
+    void recordBlackBox(double dt,std::uint32_t steps,bool clamped,double sliceMilliseconds) noexcept;
+    void observeFrame(double dt,std::uint32_t steps,bool clamped,double sliceMilliseconds) noexcept;
     Vec3 cameraPosition() const noexcept;
 
     EngineConfig config_{};
@@ -271,6 +280,10 @@ private:
     std::array<BlackBoxFrame,kBlackBoxCapacity> blackBox_{};
     std::size_t blackBoxWrite_ = 0;
     std::size_t blackBoxCount_ = 0;
+    std::uint64_t preSpikeBlackBoxFrames_ = 0;
+    std::uint64_t observedProjectileContacts_ = 0;
+    std::uint64_t observedProjectileTerminalContacts_ = 0;
+    std::uint64_t observedProjectileTargetContacts_ = 0;
     std::uint64_t sessionCollisionContacts_ = 0;
     std::uint64_t simulationInvariantRollbacks_ = 0;
     std::uint64_t consumedDamageResultSequence_ = 0;
