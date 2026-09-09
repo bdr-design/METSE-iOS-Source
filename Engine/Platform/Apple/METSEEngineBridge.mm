@@ -27,6 +27,7 @@ static constexpr uint64_t kDiagnosticPresentationDrop = 1ull << 6;
 static constexpr uint64_t kDiagnosticFXDrop = 1ull << 7;
 static constexpr uint64_t kDiagnosticDrawableMiss = 1ull << 8;
 static constexpr uint64_t kDiagnosticThermalCritical = 1ull << 9;
+static constexpr uint64_t kDiagnosticMemoryPressure = 1ull << 10;
 static constexpr uint64_t kCoverageShortRun = 1ull << 0;
 static constexpr uint64_t kCoverageNoAI = 1ull << 1;
 static constexpr uint64_t kCoverageBelow32AI = 1ull << 2;
@@ -86,6 +87,11 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
     uint64_t _callbackGapsOver100ms;
     uint64_t _callbackGapsOver250ms;
     uint64_t _lifecycleTimingResets;
+    uint64_t _lifecycleWillResignActive;
+    uint64_t _lifecycleDidEnterBackground;
+    uint64_t _lifecycleWillEnterForeground;
+    uint64_t _lifecycleDidBecomeActive;
+    uint64_t _memoryWarningEvents;
     uint64_t _thermalFallbackFrames;
     BOOL _suppressNextFrameGap;
     NSInteger _presentationFPS;
@@ -106,6 +112,7 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
     [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationWillEnterForegroundNotification object:nil];
     [center addObserver:self selector:@selector(handleTimingBoundary:) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [center addObserver:self selector:@selector(handleMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
 
     id<MTLDevice> device = view.device ?: MTLCreateSystemDefaultDevice();
     if (!device) return nil;
@@ -142,12 +149,27 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
 }
 
 - (void)handleTimingBoundary:(NSNotification *)note {
-    (void)note;
     const CFTimeInterval now = CACurrentMediaTime();
     os_unfair_lock_lock(&_telemetryLock);
     _lastFrameTime = now;
     _suppressNextFrameGap = YES;
     ++_lifecycleTimingResets;
+    if ([note.name isEqualToString:UIApplicationWillResignActiveNotification]) {
+        ++_lifecycleWillResignActive;
+    } else if ([note.name isEqualToString:UIApplicationDidEnterBackgroundNotification]) {
+        ++_lifecycleDidEnterBackground;
+    } else if ([note.name isEqualToString:UIApplicationWillEnterForegroundNotification]) {
+        ++_lifecycleWillEnterForeground;
+    } else if ([note.name isEqualToString:UIApplicationDidBecomeActiveNotification]) {
+        ++_lifecycleDidBecomeActive;
+    }
+    os_unfair_lock_unlock(&_telemetryLock);
+}
+
+- (void)handleMemoryWarning:(NSNotification *)note {
+    (void)note;
+    os_unfair_lock_lock(&_telemetryLock);
+    ++_memoryWarningEvents;
     os_unfair_lock_unlock(&_telemetryLock);
 }
 
@@ -261,6 +283,11 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     uint64_t callbackBudgetSpikes = _callbackGapsOverBudget, callback50Spikes = _callbackGapsOver50ms;
     uint64_t callback100Spikes = _callbackGapsOver100ms, callbackSpikes = _callbackGapsOver250ms;
     uint64_t lifecycleResets = _lifecycleTimingResets, thermalFallbackFrames = _thermalFallbackFrames;
+    uint64_t lifecycleWillResignActive = _lifecycleWillResignActive;
+    uint64_t lifecycleDidEnterBackground = _lifecycleDidEnterBackground;
+    uint64_t lifecycleWillEnterForeground = _lifecycleWillEnterForeground;
+    uint64_t lifecycleDidBecomeActive = _lifecycleDidBecomeActive;
+    uint64_t memoryWarnings = _memoryWarningEvents;
     uint64_t cueSnapshotDrops = _audioCueSnapshotDrops;
     double lockWaitTotal = _coreLockWaitTotalMilliseconds, lockWaitMax = _coreLockWaitMaxMilliseconds;
     double coreCriticalTotal = _coreCriticalTotalMilliseconds, coreCriticalMax = _coreCriticalMaxMilliseconds;
@@ -289,6 +316,7 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     if(_audioPresenter.droppedVoiceCount>0 || cueSnapshotDrops>0) diagnosticProblemMask |= kDiagnosticPresentationDrop;
     if(d.audioFX.fxDropped>0) diagnosticProblemMask |= kDiagnosticFXDrop;
     if(misses>0) diagnosticProblemMask |= kDiagnosticDrawableMiss;
+    if(memoryWarnings>0) diagnosticProblemMask |= kDiagnosticMemoryPressure;
     uint64_t coverageMask = 0;
     if(o.observedRealSeconds<300.0) coverageMask |= kCoverageShortRun;
     if(o.peakAIActiveAgents==0) coverageMask |= kCoverageNoAI;
@@ -330,6 +358,7 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
         @"renderedFrames":@(rendered), @"drawableMisses":@(misses), @"renderCpuAverageMs":@(cpuAvg), @"renderCpuMaxMs":@(cpuMax),
         @"coreLockWaitAverageMs":@(lockWaitAvg), @"coreLockWaitMaxMs":@(lockWaitMax), @"coreCriticalAverageMs":@(coreCriticalAvg), @"coreCriticalMaxMs":@(coreCriticalMax),
         @"callbackGapAverageMs":@(callbackGapAvg), @"callbackGapMaxMs":@(callbackGapMax), @"callbackGapsOverBudget":@(callbackBudgetSpikes), @"callbackGapsOver50ms":@(callback50Spikes), @"callbackGapsOver100ms":@(callback100Spikes), @"callbackGapsOver250ms":@(callbackSpikes), @"lifecycleTimingResets":@(lifecycleResets),
+        @"lifecycleWillResignActive":@(lifecycleWillResignActive), @"lifecycleDidEnterBackground":@(lifecycleDidEnterBackground), @"lifecycleWillEnterForeground":@(lifecycleWillEnterForeground), @"lifecycleDidBecomeActive":@(lifecycleDidBecomeActive), @"memoryWarningEvents":@(memoryWarnings),
         @"diagnosticProblemMask":@(diagnosticProblemMask), @"acceptanceCoverageMask":@(coverageMask)
     };
 }
@@ -364,9 +393,11 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
         [s[@"journalValid"] boolValue]?@"OK":@"FAIL",[s[@"worldValid"] boolValue]?@"OK":@"FAIL",[s[@"observatoryValid"] boolValue]?@"OK":@"FAIL",[s[@"queueValid"] boolValue]?@"OK":@"FAIL",[s[@"weaponValid"] boolValue]?@"OK":@"FAIL",[s[@"ballisticsValid"] boolValue]?@"OK":@"FAIL",[s[@"damageValid"] boolValue]?@"OK":@"FAIL",[s[@"visibilityValid"] boolValue]?@"OK":@"FAIL",[s[@"tacticalAIValid"] boolValue]?@"OK":@"FAIL",[s[@"audioFXValid"] boolValue]?@"OK":@"FAIL"];
     [report appendFormat:@"Renderer frames %@ misses %@ CPU avg %.3fms max %.3fms\nTiming lockWait avg %.3fms max %.3fms | coreCritical avg %.3fms max %.3fms | callback avg %.2fms max %.2fms >budget %@ >50ms %@ >100ms %@ >250ms %@ lifecycleResets %@\n",
         s[@"renderedFrames"],s[@"drawableMisses"],[s[@"renderCpuAverageMs"] doubleValue],[s[@"renderCpuMaxMs"] doubleValue],[s[@"coreLockWaitAverageMs"] doubleValue],[s[@"coreLockWaitMaxMs"] doubleValue],[s[@"coreCriticalAverageMs"] doubleValue],[s[@"coreCriticalMaxMs"] doubleValue],[s[@"callbackGapAverageMs"] doubleValue],[s[@"callbackGapMaxMs"] doubleValue],s[@"callbackGapsOverBudget"],s[@"callbackGapsOver50ms"],s[@"callbackGapsOver100ms"],s[@"callbackGapsOver250ms"],s[@"lifecycleTimingResets"]];
+    [report appendFormat:@"Lifecycle resign %@ background %@ foreground %@ active %@ | memoryWarnings %@\n",
+        s[@"lifecycleWillResignActive"],s[@"lifecycleDidEnterBackground"],s[@"lifecycleWillEnterForeground"],s[@"lifecycleDidBecomeActive"],s[@"memoryWarningEvents"]];
     [report appendFormat:@"009-H slice window avg %.3fms max %.3fms >20ms %@ (session %@) | projectile contacts %@ terminal %@ target %@ | AI decisions %@\nBlackBox preSpike session %@ causes callback %@ catchUp %@ slice %@ | retained callback %@ catchUp %@ slice %@\n",
         [s[@"simulationSliceAverageMs"] doubleValue],[s[@"simulationSliceMaxMs"] doubleValue],s[@"windowSimulationSlicesOver20ms"],s[@"simulationSlicesOver20ms"],s[@"projectileContacts"],s[@"projectileTerminalContacts"],s[@"projectileTargetContacts"],s[@"aiDecisions"],s[@"preSpikeBlackBoxFrames"],s[@"preSpikeCallbackFrames"],s[@"preSpikeCatchUpFrames"],s[@"preSpikeSimulationFrames"],s[@"retainedPreSpikeCallbackFrames"],s[@"retainedPreSpikeCatchUpFrames"],s[@"retainedPreSpikeSimulationFrames"]];
-    [report appendFormat:@"Diagnostics hardMask 0x%llx coverageMask 0x%llx (hard bits integrity=1 telemetry=2 callback=4 catchUp=8 slice=10 input=20 presentation=40 fx=80 drawable=100 thermalCritical=200; coverage bits short=1 noAI=2 below32AI=4 noProjectile=8) thermalFallbackFrames %@\nStateHash %@\nJournalHead %@\n",
+    [report appendFormat:@"Diagnostics hardMask 0x%llx coverageMask 0x%llx (hard bits integrity=1 telemetry=2 callback=4 catchUp=8 slice=10 input=20 presentation=40 fx=80 drawable=100 thermalCritical=200 memory=400; coverage bits short=1 noAI=2 below32AI=4 noProjectile=8) thermalFallbackFrames %@\nStateHash %@\nJournalHead %@\n",
         [s[@"diagnosticProblemMask"] unsignedLongLongValue],[s[@"acceptanceCoverageMask"] unsignedLongLongValue],s[@"thermalFallbackFrames"],s[@"stateHash"],s[@"journalHead"]];
     return report;
 }
