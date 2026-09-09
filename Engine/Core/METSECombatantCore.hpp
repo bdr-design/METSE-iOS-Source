@@ -12,6 +12,7 @@ using FactionId = std::uint16_t;
 enum class CombatantRole : std::uint8_t { Player=0, AI=1 };
 enum class TargetRelation : std::uint8_t { Invalid=0, Self=1, Friendly=2, Neutral=3, Hostile=4 };
 enum class TargetingPolicy : std::uint8_t { HostileOnly=0, AllowFriendlyFire=1 };
+enum class CombatantLifecycleState : std::uint8_t { Active=0, Wounded, Incapacitated, Dead, Removed };
 
 struct CombatantIdentity {
     CombatantId id = 0;
@@ -31,6 +32,15 @@ struct CombatantRecord {
     bool alive = false;
     bool combatCapable = false;
     bool targetable = false;
+    CombatantLifecycleState lifecycle = CombatantLifecycleState::Active;
+};
+
+struct CombatantLifecycleReport {
+    std::uint32_t active = 0;
+    std::uint32_t wounded = 0;
+    std::uint32_t incapacitated = 0;
+    std::uint32_t dead = 0;
+    std::uint32_t removed = 0;
 };
 
 class CombatantCore final {
@@ -45,6 +55,7 @@ public:
     void reset() noexcept;
     bool configure(std::size_t index,CombatantIdentity identity,bool alive=true,bool combatCapable=true,bool targetable=true) noexcept;
     bool syncState(std::size_t index,CombatantId id,bool alive,bool combatCapable,bool targetable=true) noexcept;
+    bool syncLifecycle(std::size_t index,CombatantId id,CombatantLifecycleState lifecycle,bool targetable=true) noexcept;
 
     [[nodiscard]] static TargetRelation relation(CombatantIdentity source,CombatantIdentity target) noexcept;
     [[nodiscard]] static bool canTarget(const DamageSource& source,CombatantIdentity target) noexcept;
@@ -52,6 +63,7 @@ public:
     [[nodiscard]] const CombatantRecord& record(std::size_t index) const noexcept { return records_[index]; }
     [[nodiscard]] const std::array<CombatantRecord,kMaxCombatants>& records() const noexcept { return records_; }
     [[nodiscard]] std::size_t count() const noexcept { return count_; }
+    [[nodiscard]] CombatantLifecycleReport report() const noexcept;
     [[nodiscard]] bool validate() const noexcept;
 
 private:

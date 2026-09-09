@@ -154,6 +154,7 @@ struct EngineDiagnostics {
     std::uint64_t aiTargetImpacts = 0;
     std::uint64_t friendlyFireDenials = 0;
     CombatantCore combatants{};
+    CombatantLifecycleReport combatantLifecycle{};
     bool journalValid = false;
     bool worldValid = false;
     bool observatoryValid = false;

@@ -12,6 +12,15 @@ namespace {
 
 bool eq(double a,double b,double epsilon=1e-8) noexcept { return std::abs(a-b)<=epsilon; }
 
+CombatantLifecycleState lifecycleFor(CombatState state) noexcept {
+    switch(state){
+        case CombatState::Wounded: return CombatantLifecycleState::Wounded;
+        case CombatState::Incapacitated: return CombatantLifecycleState::Incapacitated;
+        case CombatState::Dead: return CombatantLifecycleState::Dead;
+        case CombatState::Effective: default: return CombatantLifecycleState::Active;
+    }
+}
+
 struct AudioProjectileObserverContext {
     AudioFXCore *audio=nullptr;
     Vec3 listener{};
@@ -262,11 +271,13 @@ void EngineCore::initializeCombatantAuthority() noexcept {
 void EngineCore::syncTacticalAICombatState() noexcept {
     const auto& player=damage_.playerTarget();
     (void)combatants_.syncState(0,player.id,player.alive,DamageCore::combatCapable(player),player.alive);
+    (void)combatants_.syncLifecycle(0,player.id,lifecycleFor(player.combatState),player.alive);
     const std::size_t count=std::min(damage_.targetCount(),tacticalAI_.agentCount());
     for(std::size_t i=0;i<count;++i){
         const auto& target=damage_.targets()[i];
         tacticalAI_.syncAgentCombatState(i,target.id,target.alive,DamageCore::combatCapable(target),target.health/100.0);
         (void)combatants_.syncState(i+1u,target.id,target.alive,DamageCore::combatCapable(target),target.alive);
+        (void)combatants_.syncLifecycle(i+1u,target.id,lifecycleFor(target.combatState),target.alive);
     }
 }
 
@@ -539,6 +550,7 @@ bool EngineCore::validateInvariants() const noexcept {
        playerTarget.id!=playerRecord->identity.id||playerTarget.teamId!=playerRecord->identity.teamId||
        playerTarget.factionId!=playerRecord->identity.factionId||playerTarget.alive!=playerRecord->alive||
        DamageCore::combatCapable(playerTarget)!=playerRecord->combatCapable||
+       playerRecord->lifecycle!=lifecycleFor(playerTarget.combatState)||
        !eq(state_.playerHealth,playerTarget.health)||!eq(state_.playerBleedingPerSecond,playerTarget.bleedingPerSecond)||
        state_.playerCombatState!=playerTarget.combatState) return false;
     const std::size_t synchronizedCount=std::min(damage_.targetCount(),tacticalAI_.agentCount());
@@ -549,7 +561,8 @@ bool EngineCore::validateInvariants() const noexcept {
         if(target.id!=agent.id || !eq(target.position.x,agent.position.x) || !eq(target.position.y,agent.position.y) || !eq(target.position.z,agent.position.z) ||
            target.alive!=agent.alive || DamageCore::combatCapable(target)!=agent.combatCapable || !eq(std::clamp(target.health/100.0,0.0,1.0),agent.health01) ||
            record==nullptr||record->identity.teamId!=target.teamId||record->identity.factionId!=target.factionId||
-           record->alive!=target.alive||record->combatCapable!=DamageCore::combatCapable(target)) return false;
+           record->alive!=target.alive||record->combatCapable!=DamageCore::combatCapable(target)||
+           record->lifecycle!=lifecycleFor(target.combatState)) return false;
     }
 
     if(damage_.targetCount()>0){
@@ -762,6 +775,7 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         put64(buffer,cursor,static_cast<std::uint64_t>(combatant.identity.role));
         put64(buffer,cursor,combatant.alive?1u:0u); put64(buffer,cursor,combatant.combatCapable?1u:0u);
         put64(buffer,cursor,combatant.targetable?1u:0u);
+        put64(buffer,cursor,static_cast<std::uint64_t>(combatant.lifecycle));
     }
     return sha256(std::span<const std::uint8_t>(buffer.data(),cursor));
 }
@@ -804,6 +818,7 @@ EngineDiagnostics EngineCore::diagnostics() const noexcept {
     diagnostics.aiTargetImpacts=aiTargetImpacts_;
     diagnostics.friendlyFireDenials=damage_.friendlyFireDenials();
     diagnostics.combatants=combatants_;
+    diagnostics.combatantLifecycle=combatants_.report();
     diagnostics.journalValid=integrity_.verifyJournal();
     diagnostics.worldValid=world_.validate();
     diagnostics.observatoryValid=observatory_.validate();
