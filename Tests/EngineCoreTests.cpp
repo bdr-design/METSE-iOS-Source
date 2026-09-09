@@ -72,6 +72,8 @@ assert(core.diagnostics().journalValid);assert(core.diagnostics().worldValid);as
 
 EngineCore a,b;for(int i=0;i<240;++i){if(i%40==0){a.triggerFire();b.triggerFire();}a.setMovementInput(.7,.2);b.setMovementInput(.7,.2);a.addLookInput(.001,-.0004);b.addLookInput(.001,-.0004);a.advance(1.0/60.0);b.advance(1.0/60.0);}assert(a.deterministicStateHash()==b.deterministicStateHash());
 
+EngineCore thirtyHz;thirtyHz.advance(1.0/30.0);BlackBoxFrame expectedThermalFallback{};assert(thirtyHz.newestBlackBoxFrame(0,expectedThermalFallback)&&!expectedThermalFallback.preSpike);
+
 a.setMovementInput(std::numeric_limits<double>::quiet_NaN(),0);assert(a.diagnostics().inputQueue.rejectedInvalid>=1);auto before=a.snapshot();assert(!a.testOnlyExecuteInvariantViolation());auto after=a.snapshot();assert(before.playerX==after.playerX&&before.playerZ==after.playerZ&&a.diagnostics().integrity.commandsRolledBack>=1);
 for(int i=0;i<900;++i){a.advance(1.0/60.0);}a.advance(1.0);BlackBoxFrame preSpike{};assert(a.newestBlackBoxFrame(0,preSpike)&&preSpike.preSpike&&preSpike.catchUpClamped&&preSpike.simulationSliceMilliseconds>=0.0);assert(a.diagnostics().retainedBlackBoxFrames==EngineCore::kBlackBoxCapacity);assert(a.diagnostics().observatory.retainedFrames==ObservatoryCore::kFrameCapacity);
 std::cout<<"METSE Build 009 Tactical Combat Foundation Tests: PASS\n";

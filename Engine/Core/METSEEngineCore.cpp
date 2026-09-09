@@ -490,7 +490,11 @@ void EngineCore::recordBlackBox(double dt,std::uint32_t steps,bool clamped,doubl
     frame.aiActiveAgents=state_.tacticalAI.activeAgents;
     frame.aiLOSAgents=state_.tacticalAI.lineOfSightAgents;
     frame.aiDecisions=static_cast<std::uint32_t>(std::min<std::uint64_t>(state_.tacticalAI.decisionsExecuted,0xFFFFFFFFull));
-    frame.preSpike=clamped||dt>0.033333333||sliceMilliseconds>20.0;
+    // The expected 30 FPS thermal fallback naturally produces ~33.33 ms render deltas and
+    // two fixed simulation steps. Treat only a materially slower callback as a
+    // pre-spike signal; catch-up clamp and slow fixed slices remain authoritative.
+    const double preSpikeDeltaThreshold=config_.fixedStepSeconds*3.0;
+    frame.preSpike=clamped||dt>preSpikeDeltaThreshold||sliceMilliseconds>20.0;
     if (frame.preSpike) ++preSpikeBlackBoxFrames_;
     blackBox_[blackBoxWrite_]=frame;
     blackBoxWrite_=(blackBoxWrite_+1)%kBlackBoxCapacity;
