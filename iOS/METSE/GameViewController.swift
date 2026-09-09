@@ -4,6 +4,7 @@ import MetalKit
 final class GameViewController: UIViewController {
     private var engine: METSEEngineBridge?
     private var statusTimer: Timer?
+    private var diagnosticTimer: Timer?
     private let statusLabel = UILabel()
     private let leftPad = UIView()
     private let rightPad = UIView()
@@ -38,6 +39,11 @@ final class GameViewController: UIViewController {
         configureInput()
         configureHUD()
         refreshStatus()
+        diagnosticTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            guard UIApplication.shared.applicationState == .active, let engine = self?.engine else { return }
+            METSEDiagnosticRecorder.shared.capture(engine.observatoryReportText())
+        }
+        if let diagnosticTimer { RunLoop.main.add(diagnosticTimer, forMode: .common) }
     }
 
     override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); navigationController?.setNavigationBarHidden(true, animated: animated); startStatusTimer() }
@@ -46,9 +52,13 @@ final class GameViewController: UIViewController {
         statusTimer?.invalidate(); statusTimer = nil
         engine?.setMoveForward(0, strafe: 0); engine?.setSprintHeld(false); engine?.setAimHeld(false)
         resetJoystick(animated: false)
-        if isMovingFromParent { engine?.stop() }
+        if isMovingFromParent {
+            diagnosticTimer?.invalidate(); diagnosticTimer = nil
+            METSEDiagnosticRecorder.shared.endGameplay()
+            engine?.stop()
+        }
     }
-    deinit { statusTimer?.invalidate() }
+    deinit { statusTimer?.invalidate(); diagnosticTimer?.invalidate() }
 
     private func configureInput() {
         [leftPad, rightPad].forEach { $0.backgroundColor = .clear; $0.translatesAutoresizingMaskIntoConstraints = false; view.addSubview($0) }
