@@ -1,5 +1,6 @@
 #include "METSETacticalAICore.hpp"
 #include "METSEBallisticsCore.hpp"
+#include "METSEDamageCore.hpp"
 #include "METSEWorldCollision.hpp"
 #include <algorithm>
 #include <cmath>
@@ -50,6 +51,11 @@ void TacticalAICore::reset() noexcept {
     suppressionChecksThisStep_=0;
     suppressionObservations_=0;
     suppressionBudgetDrops_=0;
+    lossChecksThisStep_=0;
+    injuryReactions_=0;
+    witnessedLosses_=0;
+    lossBudgetDrops_=0;
+    lastObservedDamageSequence_=0;
     for(auto& weapon:weapons_) weapon=WeaponCore(weaponConfig_);
 }
 
@@ -75,7 +81,7 @@ bool TacticalAICore::syncAgent(std::size_t index,std::uint32_t id,Vec3 position,
     agent.combatCapable=alive&&combatCapable;
     agent.health01=clamp01(health01);
     if(!agent.combatCapable) clearKnowledgeAndAction(agent);
-    if(!agent.combatCapable){ agent.suppression01=0.0; agent.lastSuppressionCorrelationId=0; }
+    if(!agent.combatCapable) clearCombatReactions(agent);
     agentCount_=std::max(agentCount_,index+1);
     return true;
 }
@@ -87,7 +93,7 @@ bool TacticalAICore::syncAgentCombatState(std::size_t index,std::uint32_t id,boo
     agent.combatCapable=alive&&combatCapable;
     agent.health01=clamp01(health01);
     if(!agent.combatCapable) clearKnowledgeAndAction(agent);
-    if(!agent.combatCapable){ agent.suppression01=0.0; agent.lastSuppressionCorrelationId=0; }
+    if(!agent.combatCapable) clearCombatReactions(agent);
     return true;
 }
 
@@ -130,6 +136,67 @@ void TacticalAICore::observeProjectileSegment(const ProjectileSegmentObservation
     }
 }
 
+void TacticalAICore::clearCombatReactions(TacticalAgentState& agent) noexcept {
+    agent.suppression01=0.0;
+    agent.lastSuppressionCorrelationId=0;
+    agent.injuryRecoveryRemaining=0.0;
+    agent.teamLossConcernRemaining=0.0;
+    agent.lastInjuryCorrelationId=0;
+    agent.lastWitnessedLossId=0;
+    agent.lastWitnessedLossCorrelationId=0;
+}
+
+bool TacticalAICore::observeDamageResult(const DamageResult& result,
+                                         const CombatantCore& combatants,
+                                         const WorldCollisionCore& world) noexcept {
+    if(result.sequence==0||result.sequence!=lastObservedDamageSequence_+1||result.correlationId==0||
+       !std::isfinite(result.damage)||result.damage<0.0||
+       !std::isfinite(result.remainingHealth)||result.remainingHealth<0.0||result.remainingHealth>100.0||
+       result.cause>DamageCause::Bleeding||result.newState>CombatState::Dead||result.previousState>CombatState::Dead||
+       (result.killed&&(result.newState!=CombatState::Dead||!result.stateChanged))||
+       (result.incapacitated&&(result.newState!=CombatState::Incapacitated||!result.stateChanged))) return false;
+    const auto* casualty=combatants.recordById(result.targetId);
+    if(casualty==nullptr) return false;
+    // The player has no AI locomotion slot. Hostile player losses are not teammate
+    // casualty notifications for the current AI-only opposing team.
+    if(casualty->identity.role!=CombatantRole::AI){ lastObservedDamageSequence_=result.sequence; return true; }
+    std::size_t injuredIndex=agentCount_;
+    for(std::size_t i=0;i<agentCount_;++i) if(agents_[i].id==result.targetId){ injuredIndex=i; break; }
+    if(injuredIndex==agentCount_) return false;
+    lastObservedDamageSequence_=result.sequence;
+    auto& injured=agents_[injuredIndex];
+    if(injured.combatCapable&&result.cause==DamageCause::Impact&&result.hit&&result.damage>0.0){
+        injured.injuryRecoveryRemaining=kInjuryRecoverySeconds;
+        injured.lastInjuryCorrelationId=result.correlationId;
+        injured.fireAuthorized=false;
+        injured.decisionAgeSeconds=std::max(injured.decisionAgeSeconds,config_.decisionIntervalSeconds);
+        ++injuryReactions_;
+    }
+    if(!result.incapacitated&&!result.killed) return true;
+    for(std::size_t i=0;i<agentCount_;++i){
+        if(lossChecksThisStep_>=kMaxLossChecksPerStep){ ++lossBudgetDrops_; return true; }
+        ++lossChecksThisStep_;
+        auto& witness=agents_[i];
+        if(!witness.combatCapable||i==injuredIndex) continue;
+        const auto* identity=combatants.recordById(witness.id);
+        if(identity==nullptr||CombatantCore::relation(identity->identity,casualty->identity)!=TargetRelation::Friendly) continue;
+        const Vec3 delta{injured.position.x-witness.position.x,injured.position.y-witness.position.y,
+                         injured.position.z-witness.position.z};
+        if(delta.x*delta.x+delta.y*delta.y+delta.z*delta.z>kLossWitnessRangeMeters*kLossWitnessRangeMeters) continue;
+        const double bearing=std::atan2(delta.x,delta.z);
+        if(std::abs(wrapAngle(bearing-witness.facingYaw))>config_.horizontalFovRadians*0.5) continue;
+        const Vec3 eye{witness.position.x,witness.position.y+config_.agentEyeHeight,witness.position.z};
+        const Vec3 observed{injured.position.x,injured.position.y+kPlayerChestHeight,injured.position.z};
+        if(world.raycastSegment(eye,observed).hit) continue;
+        witness.teamLossConcernRemaining=kTeamLossConcernSeconds;
+        witness.lastWitnessedLossId=result.targetId;
+        witness.lastWitnessedLossCorrelationId=result.correlationId;
+        witness.decisionAgeSeconds=std::max(witness.decisionAgeSeconds,config_.decisionIntervalSeconds);
+        ++witnessedLosses_;
+    }
+    return true;
+}
+
 void TacticalAICore::clearKnowledgeAndAction(TacticalAgentState& agent) noexcept {
     agent.lastKnownPlayerPosition={};
     agent.actionTarget={};
@@ -157,6 +224,7 @@ void TacticalAICore::fixedStep(double dt,
                                double playerNoise01) noexcept {
     if(!std::isfinite(dt)||dt<=0.0||!finiteVec(playerPosition)||!finiteVec(playerVelocity)) return;
     suppressionChecksThisStep_=0;
+    lossChecksThisStep_=0;
     const double noise=clamp01(playerNoise01);
     const double hearingRadius=config_.hearingBaseMeters+(config_.hearingMaxMeters-config_.hearingBaseMeters)*noise;
 
@@ -165,6 +233,10 @@ void TacticalAICore::fixedStep(double dt,
         if(agent.id==0||!agent.combatCapable) continue;
         agent.suppression01=std::max(0.0,agent.suppression01-kSuppressionDecayPerSecond*dt);
         if(agent.suppression01==0.0) agent.lastSuppressionCorrelationId=0;
+        agent.injuryRecoveryRemaining=std::max(0.0,agent.injuryRecoveryRemaining-dt);
+        agent.teamLossConcernRemaining=std::max(0.0,agent.teamLossConcernRemaining-dt);
+        if(agent.injuryRecoveryRemaining==0.0) agent.lastInjuryCorrelationId=0;
+        if(agent.teamLossConcernRemaining==0.0){ agent.lastWitnessedLossId=0; agent.lastWitnessedLossCorrelationId=0; }
         perceiveAgent(agent,world,playerPosition,playerVelocity,noise,hearingRadius,dt);
         agent.decisionAgeSeconds+=dt;
         agent.actionAgeSeconds+=dt;
@@ -212,7 +284,7 @@ std::size_t TacticalAICore::fireAuthorizedShots(std::size_t maxShots,
     for(std::size_t i=0;i<agentCount_&&emitted<boundedMax;++i){
         auto& agent=agents_[i];
         auto& weapon=weapons_[i];
-        if(agent.suppression01>=kSuppressionThreshold||!agent.fireAuthorized||!agent.combatCapable||!agent.hasLineOfSight||
+        if(agent.injuryRecoveryRemaining>0.0||agent.suppression01>=kSuppressionThreshold||!agent.fireAuthorized||!agent.combatCapable||!agent.hasLineOfSight||
            agent.perceptionSource!=AIPerceptionSource::Vision||
            (agent.action!=AIActionState::Peek&&agent.action!=AIActionState::Suppress)) continue;
 
@@ -370,11 +442,13 @@ void TacticalAICore::decideAgent(std::size_t agentIndex,const WorldCollisionCore
 
     const Vec3 threatPosition=agent.lastKnownPlayerPosition;
     const double threatDistance=distanceXZ(agent.position,threatPosition);
+    const bool underPressure=agent.suppression01>=kSuppressionThreshold||
+        agent.injuryRecoveryRemaining>0.0||agent.teamLossConcernRemaining>0.0;
 
-    if(agent.hasLineOfSight||agent.suppression01>=kSuppressionThreshold){
+    if(agent.hasLineOfSight||underPressure){
         Vec3 coverPosition{},peekPosition{};
         std::uint8_t coverIndex=kNoCoverCandidate;
-        const bool retreat=agent.health01<=config_.retreatHealth01||agent.suppression01>=kSuppressionThreshold;
+        const bool retreat=agent.health01<=config_.retreatHealth01||underPressure;
         const bool foundCover=selectCover(agent,world,threatPosition,retreat,coverPosition,peekPosition,coverIndex);
         if(foundCover){
             agent.coverPosition=coverPosition;
@@ -384,7 +458,7 @@ void TacticalAICore::decideAgent(std::size_t agentIndex,const WorldCollisionCore
                 setAction(agent,retreat?AIActionState::Retreat:AIActionState::MoveToCover,coverPosition);
                 return;
             }
-            if(agent.suppression01>=kSuppressionThreshold){
+            if(underPressure){
                 setAction(agent,AIActionState::Hold,agent.position);
                 return;
             }
@@ -554,6 +628,7 @@ bool TacticalAICore::authorizeFire(std::size_t agentIndex,const WorldCollisionCo
     auto& agent=agents_[agentIndex];
     auto& weapon=weapons_[agentIndex];
     if(agent.suppression01>=kSuppressionThreshold) return false;
+    if(agent.injuryRecoveryRemaining>0.0) return false;
     if(!agent.combatCapable||!agent.hasLineOfSight||agent.perceptionSource!=AIPerceptionSource::Vision) return false;
     if(agent.action!=AIActionState::Peek&&agent.action!=AIActionState::Suppress) return false;
 
@@ -607,11 +682,18 @@ TacticalAIReport TacticalAICore::report() const noexcept {
     out.suppressionChecksThisStep=suppressionChecksThisStep_;
     out.suppressionObservations=suppressionObservations_;
     out.suppressionBudgetDrops=suppressionBudgetDrops_;
+    out.lossChecksThisStep=lossChecksThisStep_;
+    out.injuryReactions=injuryReactions_;
+    out.witnessedLosses=witnessedLosses_;
+    out.lossBudgetDrops=lossBudgetDrops_;
+    out.lastObservedDamageSequence=lastObservedDamageSequence_;
     for(std::size_t i=0;i<agentCount_;++i){
         const auto& agent=agents_[i];
         if(agent.id==0||!agent.combatCapable) continue;
         ++out.activeAgents;
         if(agent.suppression01>=kSuppressionThreshold) ++out.suppressedAgents;
+        if(agent.injuryRecoveryRemaining>0.0) ++out.recoveringAgents;
+        if(agent.teamLossConcernRemaining>0.0) ++out.concernedAgents;
         if(agent.hasLineOfSight) ++out.lineOfSightAgents;
         if(agent.heardPlayer) ++out.hearingAgents;
         if(agent.alert==AIAlertState::Suspicious) ++out.suspiciousAgents;
@@ -641,6 +723,7 @@ TacticalAIReport TacticalAICore::report() const noexcept {
 
 bool TacticalAICore::validate() const noexcept {
     if(suppressionChecksThisStep_>kMaxSuppressionChecksPerStep) return false;
+    if(lossChecksThisStep_>kMaxLossChecksPerStep) return false;
     if(agentCount_>kMaxAgents||(agentCount_==0?decisionCursor_!=0:decisionCursor_>=agentCount_)||
        !std::isfinite(config_.maxVisionDistanceMeters)||config_.maxVisionDistanceMeters<=0.0||
        !std::isfinite(config_.horizontalFovRadians)||config_.horizontalFovRadians<=0.0||
@@ -656,6 +739,13 @@ bool TacticalAICore::validate() const noexcept {
     for(std::size_t i=0;i<agentCount_;++i){
         const auto& agent=agents_[i];
         if(agent.id==0) continue;
+        if(!std::isfinite(agent.injuryRecoveryRemaining)||agent.injuryRecoveryRemaining<0.0||agent.injuryRecoveryRemaining>kInjuryRecoverySeconds||
+           !std::isfinite(agent.teamLossConcernRemaining)||agent.teamLossConcernRemaining<0.0||agent.teamLossConcernRemaining>kTeamLossConcernSeconds||
+           ((agent.injuryRecoveryRemaining>0.0)!=(agent.lastInjuryCorrelationId!=0))||
+           ((agent.teamLossConcernRemaining>0.0)!=(agent.lastWitnessedLossId!=0))||
+           ((agent.teamLossConcernRemaining>0.0)!=(agent.lastWitnessedLossCorrelationId!=0))||
+           (!agent.combatCapable&&(agent.injuryRecoveryRemaining>0.0||agent.teamLossConcernRemaining>0.0))||
+           (agent.injuryRecoveryRemaining>0.0&&agent.fireAuthorized)) return false;
         if(!std::isfinite(agent.suppression01)||agent.suppression01<0.0||agent.suppression01>1.0||
            (agent.suppression01==0.0&&agent.lastSuppressionCorrelationId!=0)||
            (agent.suppression01>0.0&&agent.lastSuppressionCorrelationId==0)||

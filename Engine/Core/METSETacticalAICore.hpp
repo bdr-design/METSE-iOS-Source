@@ -7,6 +7,7 @@
 namespace metse {
 class WorldCollisionCore;
 struct ProjectileSegmentObservation;
+struct DamageResult;
 
 enum class AIAlertState : std::uint8_t { Unaware=0, Suspicious=1, Investigating=2, Engaged=3 };
 enum class AISquadOrder : std::uint8_t { Hold=0, Search=1, Assault=2, Defend=3 };
@@ -61,6 +62,11 @@ struct TacticalAgentState {
     double health01 = 1.0;
     double suppression01 = 0.0;
     std::uint64_t lastSuppressionCorrelationId = 0;
+    double injuryRecoveryRemaining = 0.0;
+    double teamLossConcernRemaining = 0.0;
+    std::uint64_t lastInjuryCorrelationId = 0;
+    CombatantId lastWitnessedLossId = 0;
+    std::uint64_t lastWitnessedLossCorrelationId = 0;
     std::uint64_t actionSequence = 0;
     std::uint32_t squadSourceAgentId = 0;
     std::uint8_t coverCandidateIndex = 0xFFu;
@@ -97,6 +103,13 @@ struct TacticalAIReport {
     std::uint32_t suppressionChecksThisStep = 0;
     std::uint64_t suppressionObservations = 0;
     std::uint64_t suppressionBudgetDrops = 0;
+    std::uint32_t recoveringAgents = 0;
+    std::uint32_t concernedAgents = 0;
+    std::uint32_t lossChecksThisStep = 0;
+    std::uint64_t injuryReactions = 0;
+    std::uint64_t witnessedLosses = 0;
+    std::uint64_t lossBudgetDrops = 0;
+    std::uint64_t lastObservedDamageSequence = 0;
     double highestThreat = 0.0;
     AISquadOrder squadOrder = AISquadOrder::Hold;
 };
@@ -109,6 +122,10 @@ public:
     static constexpr double kSuppressionRadiusMeters = 1.5;
     static constexpr double kSuppressionThreshold = 0.5;
     static constexpr double kSuppressionDecayPerSecond = 0.5;
+    static constexpr std::size_t kMaxLossChecksPerStep = 128;
+    static constexpr double kInjuryRecoverySeconds = 0.35;
+    static constexpr double kTeamLossConcernSeconds = 2.0;
+    static constexpr double kLossWitnessRangeMeters = 18.0;
     static constexpr std::uint8_t kNoCoverCandidate = 0xFFu;
 
     explicit TacticalAICore(TacticalAIConfig config = {}, WeaponConfig weaponConfig = {}) noexcept;
@@ -138,6 +155,11 @@ public:
     void observeProjectileSegment(const ProjectileSegmentObservation& segment,
                                   const CombatantCore& combatants,
                                   const WorldCollisionCore& world) noexcept;
+    // Ordered DamageCore ledger consumption inside EngineCore's atomic slice.
+    // Returns false for an invalid/discontinuous event, never changes health.
+    bool observeDamageResult(const DamageResult& result,
+                             const CombatantCore& combatants,
+                             const WorldCollisionCore& world) noexcept;
 
     [[nodiscard]] const TacticalAIConfig& config() const noexcept { return config_; }
     [[nodiscard]] const WeaponConfig& weaponConfig() const noexcept { return weaponConfig_; }
@@ -160,6 +182,7 @@ private:
     static Vec3 squadEstimate(std::uint32_t recipientId,std::uint32_t sourceId,Vec3 knownPosition,double confidence,double maxErrorMeters) noexcept;
 
     void clearKnowledgeAndAction(TacticalAgentState& agent) noexcept;
+    static void clearCombatReactions(TacticalAgentState& agent) noexcept;
     void perceiveAgent(TacticalAgentState& agent,
                        const WorldCollisionCore& world,
                        Vec3 playerPosition,
@@ -199,6 +222,11 @@ private:
     std::uint32_t suppressionChecksThisStep_ = 0;
     std::uint64_t suppressionObservations_ = 0;
     std::uint64_t suppressionBudgetDrops_ = 0;
+    std::uint32_t lossChecksThisStep_ = 0;
+    std::uint64_t injuryReactions_ = 0;
+    std::uint64_t witnessedLosses_ = 0;
+    std::uint64_t lossBudgetDrops_ = 0;
+    std::uint64_t lastObservedDamageSequence_ = 0;
 };
 
 } // namespace metse
