@@ -36,6 +36,11 @@ final class METSEDiagnosticRecorder {
         cachedReport = report; capturedAt = Date().timeIntervalSince1970
         checkpoint()
     }
+    func beginGameplay() {
+        precondition(Thread.isMainThread)
+        phase = UIApplication.shared.applicationState == .active ? .active : .inactive
+        checkpoint()
+    }
     func endGameplay() { precondition(Thread.isMainThread); phase = .sessionEnded; checkpoint() }
     private func checkpoint() {
         precondition(Thread.isMainThread)

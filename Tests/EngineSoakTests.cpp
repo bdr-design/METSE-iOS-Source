@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <new>
+#include <string_view>
 
 namespace { bool track=false; std::size_t allocations=0; }
 void* operator new(std::size_t n) {
@@ -18,17 +19,40 @@ void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p,std::size_t) noexcept { std::free(p); }
 
 int main(int argc,char** argv) {
-    const int seconds=argc==2?std::atoi(argv[1]):7200;
+    assert(argc<=3);
+    const int seconds=argc>=2?std::atoi(argv[1]):7200;
+    const std::string_view mode=argc==3?argv[2]:"aging";
+    assert(mode=="aging" || mode=="combat");
+    const bool combatRounds=mode=="combat";
     assert(seconds>=120 && seconds<=7200);
     metse::EngineCore first,second;
     assert(first.setActiveCombatants(32) && second.setActiveCombatants(32));
     const auto started=std::chrono::steady_clock::now();
-    std::uint64_t rounds=1,loadedFrames=0,fullFrames=0;
+    std::uint64_t rounds=1,loadedFrames=0,fullFrames=0,combinedFrames=0,aiShots=0,playerImpacts=0;
     metse::EngineDiagnosticsCapture captured;
+    const auto capable=[](const metse::EngineSnapshot& s){
+        return s.playerCombatState==metse::CombatState::Effective || s.playerCombatState==metse::CombatState::Wounded;
+    };
+    const auto verify=[&]{
+        first.captureDiagnostics(captured);
+        const auto d=captured.finish();
+        assert(d.stateHash==second.deterministicStateHash());
+        assert(d.journalValid && d.worldValid && d.observatoryValid && d.inputQueueValid &&
+               d.weaponValid && d.ballisticsValid && d.damageValid && d.visibilityValid &&
+               d.tacticalAIValid && d.audioFXValid);
+        assert(d.simulationInvariantRollbacks==0);
+        const auto other=second.diagnostics();
+        assert(other.journalValid && other.simulationInvariantRollbacks==0);
+    };
     track=true;
     for(int tick=0;tick<seconds*60;++tick){
-        // Explicit 120-second rounds preserve deaths; no invulnerability or health bypass.
-        if(tick>0 && tick%7200==0){
+        // Separate modes: aging wraps retained history; combat starts a new test
+        // round after actual incapacitation. Never heal/respawn a live combatant.
+        const bool roundEnded=combatRounds ? !capable(first.snapshot()) : tick%7200==0;
+        if(tick>0 && roundEnded){
+            verify(); // Reset must not erase evidence of a failed last slice.
+            aiShots+=first.snapshot().aiShotsFired;
+            playerImpacts+=first.snapshot().aiTargetImpacts;
             first.reset(); second.reset();
             assert(first.setActiveCombatants(32) && second.setActiveCombatants(32));
             ++rounds;
@@ -50,22 +74,23 @@ int main(int argc,char** argv) {
         }
         const auto& s=first.snapshot();
         if(s.activeProjectiles>=64) ++loadedFrames;
-        if(s.tacticalAI.activeAgents==31 && (s.playerCombatState==metse::CombatState::Effective ||
-           s.playerCombatState==metse::CombatState::Wounded)) ++fullFrames;
-        if(tick%600==0 || tick==seconds*60-1){
-            first.captureDiagnostics(captured);
-            const auto d=captured.finish();
-            assert(d.stateHash==second.deterministicStateHash());
-            assert(d.journalValid && d.worldValid && d.observatoryValid && d.inputQueueValid &&
-                   d.weaponValid && d.ballisticsValid && d.damageValid && d.visibilityValid &&
-                   d.tacticalAIValid && d.audioFXValid);
-            assert(d.simulationInvariantRollbacks==0);
+        if(s.combatantCount==32 && s.tacticalAI.activeAgents==31 && capable(s)){
+            ++fullFrames;
+            if(s.activeProjectiles>=64) ++combinedFrames;
         }
+        if(tick%600==0 || tick==seconds*60-1) verify();
     }
+    aiShots+=first.snapshot().aiShotsFired;
+    playerImpacts+=first.snapshot().aiTargetImpacts;
     track=false;
     assert(allocations==0);
-    std::cout<<"HOST SOAK PASS simulated_seconds="<<seconds<<" rounds="<<rounds
+    if(combatRounds){
+        assert(combinedFrames*100>=static_cast<std::uint64_t>(seconds)*60*90);
+        assert(rounds>1 && aiShots>0 && playerImpacts>0);
+    }
+    std::cout<<"HOST SOAK PASS mode="<<mode<<" simulated_seconds="<<seconds<<" rounds="<<rounds
              <<" projectile_load_seconds="<<loadedFrames/60.0<<" full_combat_load_seconds="<<fullFrames/60.0
+             <<" combined_load_seconds="<<combinedFrames/60.0<<" ai_shots="<<aiShots<<" player_impacts="<<playerImpacts
              <<" ordinary_cpp_new_calls="<<allocations
              <<" wall_seconds="<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()
              <<"\nTwo deterministic real-core instances; no iPhone FPS/thermal/GPU/leak certification.\n";
