@@ -8,6 +8,8 @@ assert 'combatRounds ? !capable(first.snapshot()) : tick%7200==0' in test
 assert 'combinedFrames*100>=static_cast<std::uint64_t>(seconds)*60*90' in test
 assert 'rounds>1 && aiShots>0 && playerImpacts>0' in test
 assert 'verify(); // Reset must not erase evidence' in test
+assert 'METSEDiagnosticRecorder.shared.beginGameplay()' in read('iOS/METSE/GameViewController.swift')
+assert 'func beginGameplay()' in read('iOS/METSE/METSEDiagnosticRecorder.swift')
 for forbidden in ('playerHealth=', 'damage_.', 'testOnlySetAirborne', 'fno-exceptions', 'NDEBUG'):
     assert forbidden not in test + read("Scripts/test_engine_soak.sh")
 workflow = read(".github/workflows/build-ios-unsigned.yml")

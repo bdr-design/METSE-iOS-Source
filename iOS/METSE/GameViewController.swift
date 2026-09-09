@@ -35,6 +35,7 @@ final class GameViewController: UIViewController {
         ])
         guard let bridge = METSEEngineBridge(view: metalView) else { showUnsupportedMetal(); return }
         engine = bridge
+        METSEDiagnosticRecorder.shared.beginGameplay()
         bridge.start()
         configureInput()
         configureHUD()
