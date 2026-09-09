@@ -21,6 +21,7 @@ bridge = text("Engine/Platform/Apple/METSEEngineBridge.mm")
 ui = text("iOS/METSE/ObservatoryViewController.swift")
 runner = text("Scripts/test_engine_core.sh")
 doc = text("Docs/BUILD009_H_OBSERVATORY_BLACKBOX_AR.md")
+reference_doc = text("Docs/BUILD009_REFERENCE_BINARY_AUDIT_AR.md")
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -48,8 +49,11 @@ require("coreLockWaitAverageMs" in bridge and "callbackGapMaxMs" in bridge,
 require("callbackGapsOverBudget" in bridge and "thermalFallbackFrames" in bridge and
         "diagnosticProblemMask" in bridge and "acceptanceCoverageMask" in bridge,
         "Bridge timing attribution and coverage report are missing")
+require("handleMemoryWarning" in bridge and "memoryWarningEvents" in bridge and
+        "lifecycleDidEnterBackground" in bridge and "lifecycleDidBecomeActive" in bridge,
+        "Bridge memory-pressure and typed lifecycle telemetry is missing")
 require("Problems / Coverage" in ui and "telemetryRejectedSamples" in ui and
-        "THERMAL FALLBACK" in ui,
+        "THERMAL FALLBACK" in ui and "memoryWarningEvents" in ui,
         "Observatory UI must expose problem/coverage attribution")
 require("METSE OBSERVATORY V4 / BUILD009-H" in bridge,
         "Bridge Observatory report must identify the 009-H schema")
@@ -58,6 +62,9 @@ for token in ("maxSimulationSliceMilliseconds", "simulationSlicesOver20ms", "pro
 require("Tests/EngineCoreTests.cpp" in runner, "009-H observatory regression must run")
 require("Observatory V4" in doc and "Black Box V2" in doc and "session/window" in doc and "سبب" in doc,
         "009-H documentation missing precision telemetry contract")
+require("CydiaSubstrate" in reference_doc and "مصدر حقيقة" in reference_doc and
+        "memory pressure" in reference_doc,
+        "Reference binary audit must document the untrusted injection boundary and telemetry lesson")
 
 if errors:
     print("BUILD 009-H OBSERVATORY/BLACK BOX GUARDRAILS: FAIL")
