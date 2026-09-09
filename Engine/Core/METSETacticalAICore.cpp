@@ -157,6 +157,42 @@ void TacticalAICore::fixedStep(double dt,
     }
 }
 
+std::size_t TacticalAICore::fireAuthorizedShots(std::size_t maxShots,
+                                                std::array<ShotSolution,kMaxAgents>& out) noexcept {
+    const std::size_t boundedMax=std::min(maxShots,kMaxAgents);
+    std::size_t emitted=0;
+    for(std::size_t i=0;i<agentCount_&&emitted<boundedMax;++i){
+        auto& agent=agents_[i];
+        auto& weapon=weapons_[i];
+        if(!agent.fireAuthorized||!agent.combatCapable||!agent.hasLineOfSight||
+           agent.perceptionSource!=AIPerceptionSource::Vision||
+           (agent.action!=AIActionState::Peek&&agent.action!=AIActionState::Suppress)) continue;
+
+        const Vec3 firingPosition=agent.action==AIActionState::Peek?agent.peekPosition:agent.position;
+        const Vec3 camera{firingPosition.x,firingPosition.y+config_.agentEyeHeight,firingPosition.z};
+        const Vec3 target{agent.lastKnownPlayerPosition.x,
+                          agent.lastKnownPlayerPosition.y+kPlayerChestHeight,
+                          agent.lastKnownPlayerPosition.z};
+        const double dx=target.x-camera.x;
+        const double dz=target.z-camera.z;
+        const double horizontal=std::hypot(dx,dz);
+        if(horizontal<=1e-8){ agent.fireAuthorized=false; continue; }
+        const double yaw=std::atan2(dx,dz);
+        const double pitch=std::atan2(target.y-camera.y,horizontal);
+        const std::uint64_t nextShot=weapon.state().shotSequence+1u;
+        const std::uint64_t correlation=(static_cast<std::uint64_t>(agent.id)<<32u)|(nextShot&0xFFFFFFFFull);
+        ShotSolution shot{};
+        if(!weapon.fire(camera,yaw,pitch,correlation==0?1:correlation,shot)){
+            agent.fireAuthorized=false;
+            continue;
+        }
+        shot.sourceCombatantId=agent.id;
+        out[emitted++]=shot;
+        agent.fireAuthorized=false;
+    }
+    return emitted;
+}
+
 void TacticalAICore::perceiveAgent(TacticalAgentState& agent,
                                    const WorldCollisionCore& world,
                                    Vec3 playerPosition,
@@ -526,6 +562,7 @@ TacticalAIReport TacticalAICore::report() const noexcept {
         else if(agent.alert==AIAlertState::Engaged) ++out.engagedAgents;
         if(agent.hasCover) ++out.agentsInCover;
         if(agent.fireAuthorized) ++out.fireAuthorizedAgents;
+        out.shotsFired+=weapons_[i].state().shotSequence;
         switch(agent.action){
             case AIActionState::MoveToCover: ++out.moveToCoverAgents; break;
             case AIActionState::Peek: ++out.peekAgents; break;

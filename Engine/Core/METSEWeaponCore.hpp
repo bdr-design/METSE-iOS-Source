@@ -1,4 +1,5 @@
 #pragma once
+#include "METSECombatantCore.hpp"
 #include <cstdint>
 
 namespace metse {
@@ -51,6 +52,13 @@ struct ShotSolution {
     double muzzleVelocity = 0.0;
     double massKg = 0.0;
     std::uint64_t correlationId = 0;
+    // Provenance is attached by EngineCore after WeaponCore accepts the shot. The
+    // weapon remains responsible only for handling and Aim Truth, never target policy.
+    CombatantId sourceCombatantId = 0;
+    TeamId sourceTeamId = 0;
+    FactionId sourceFactionId = 0;
+    TargetingPolicy targetingPolicy = TargetingPolicy::HostileOnly;
+    bool includePlayerTarget = false;
 };
 
 class WeaponCore final {

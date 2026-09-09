@@ -21,22 +21,116 @@ void DamageCore::reset() noexcept {
     targets_ = {};
     // Training targets intentionally remain on unobstructed sight lines from the
     // default camera so Aim Truth, anatomy and ballistic ordering can be verified.
+    targetCount_ = 2;
     targets_[0].id = 1;
     targets_[0].position = {-10.0,0.0,18.0};
     targets_[0].radius = 0.36;
     targets_[1].id = 2;
     targets_[1].position = {22.0,0.0,26.0};
     targets_[1].radius = 0.36;
-    targetCount_ = 2;
+    for(std::size_t i=0;i<targetCount_;++i){
+        targets_[i].teamId=CombatantCore::kHostileTeam;
+        targets_[i].factionId=CombatantCore::kHostileFaction;
+        targets_[i].role=CombatantRole::AI;
+    }
+    playerTarget_={};
+    playerTarget_.id=CombatantCore::kPlayerId;
+    playerTarget_.teamId=CombatantCore::kPlayerTeam;
+    playerTarget_.factionId=CombatantCore::kPlayerFaction;
+    playerTarget_.role=CombatantRole::Player;
+    playerTarget_.position={0.0,0.0,0.0};
+    playerTarget_.radius=0.36;
+    playerTargetEnabled_=false;
     metrics_ = {};
     results_ = {};
     lastResult_ = {};
     resultSequence_ = 0;
+    friendlyFireDenials_=0;
+}
+
+bool DamageCore::configureAgentCount(std::size_t count) noexcept {
+    if(count>kMaxTargets) return false;
+    targets_={};
+    targetCount_=count;
+    for(std::size_t i=0;i<count;++i){
+        auto& target=targets_[i];
+        target.id=static_cast<CombatantId>(i+1u);
+        target.teamId=CombatantCore::kHostileTeam;
+        target.factionId=CombatantCore::kHostileFaction;
+        target.role=CombatantRole::AI;
+        target.radius=0.36;
+        // Preserve the two legacy aim anchors. Additional combatants are placed by a
+        // deterministic bounded ring so 32-agent stress never needs a content list.
+        if(i==0) target.position={-10.0,0.0,18.0};
+        else if(i==1) target.position={22.0,0.0,26.0};
+        else {
+            const double angle=static_cast<double>(i)*2.399963229728653;
+            const double radius=18.0+static_cast<double>(i%4u)*3.0;
+            target.position={std::clamp(std::cos(angle)*radius,-42.0,42.0),0.0,
+                             std::clamp(std::sin(angle)*radius,-42.0,42.0)};
+        }
+    }
+    metrics_={};
+    results_={};
+    lastResult_={};
+    resultSequence_=0;
+    friendlyFireDenials_=0;
+    return true;
+}
+
+bool DamageCore::configureTargetIdentity(std::size_t index,CombatantIdentity identity) noexcept {
+    if(index>=targetCount_||identity.id==0||targets_[index].id!=identity.id||identity.role!=CombatantRole::AI) return false;
+    targets_[index].teamId=identity.teamId;
+    targets_[index].factionId=identity.factionId;
+    targets_[index].role=identity.role;
+    return true;
+}
+
+bool DamageCore::configurePlayerTarget(CombatantIdentity identity) noexcept {
+    if(identity.id==0||identity.role!=CombatantRole::Player||identity.teamId==0||identity.factionId==0) return false;
+    const auto previousPosition=playerTarget_.position;
+    playerTarget_={};
+    playerTarget_.id=identity.id;
+    playerTarget_.teamId=identity.teamId;
+    playerTarget_.factionId=identity.factionId;
+    playerTarget_.role=identity.role;
+    playerTarget_.position=finiteVec(previousPosition)?previousPosition:Vec3{};
+    playerTarget_.health=100.0;
+    playerTarget_.helmetArmorJoules=kHelmetArmorCapacityJ;
+    playerTarget_.torsoArmorJoules=kTorsoArmorCapacityJ;
+    playerTarget_.alive=true;
+    playerTarget_.combatState=CombatState::Effective;
+    playerTarget_.bleedingPerSecond=0.0;
+    playerTarget_.lastDamageCorrelationId=0;
+    playerTarget_.radius=0.36;
+    playerTargetEnabled_=false;
+    return true;
+}
+
+bool DamageCore::setPlayerTargetEnabled(bool enabled) noexcept {
+    if(enabled&&(playerTarget_.id==0||playerTarget_.role!=CombatantRole::Player)) return false;
+    playerTargetEnabled_=enabled;
+    return true;
 }
 
 bool DamageCore::syncTargetPosition(std::size_t index,std::uint32_t id,Vec3 position) noexcept {
     if(index>=targetCount_||id==0||targets_[index].id!=id||!finiteVec(position)) return false;
     targets_[index].position=position;
+    return true;
+}
+
+bool DamageCore::syncPlayerTargetPosition(CombatantId id,Vec3 position) noexcept {
+    if(!playerTargetEnabled_||id==0||playerTarget_.id!=id||!finiteVec(position)) return false;
+    playerTarget_.position=position;
+    return true;
+}
+
+bool DamageCore::syncPlayerTargetState(CombatantId id,bool alive,bool combatCapable,double health01) noexcept {
+    if(!playerTargetEnabled_||id==0||playerTarget_.id!=id||!std::isfinite(health01)) return false;
+    playerTarget_.alive=alive;
+    playerTarget_.health=std::clamp(health01,0.0,1.0)*100.0;
+    playerTarget_.combatState=alive?(combatCapable?classifyState(playerTarget_.health,playerTarget_.bleedingPerSecond):CombatState::Incapacitated):CombatState::Dead;
+    if(!alive) playerTarget_.bleedingPerSecond=0.0;
     return true;
 }
 
@@ -91,25 +185,52 @@ double DamageCore::regionBleedingScale(HitRegion region) noexcept {
     }
 }
 
+DamageIntersection DamageCore::traceTarget(const DamageTarget& target,
+                                            std::size_t targetIndex,
+                                            bool playerTarget,
+                                            const Vec3& from,
+                                            const Vec3& to,
+                                            DamageIntersection best) noexcept {
+    if(!target.alive) return best;
+    double t=0.0;
+    const double radialDistance=segmentPointDistanceXZ(from,to,target.position,t);
+    if(radialDistance>target.radius||t>=best.t) return best;
+    const Vec3 point={from.x+(to.x-from.x)*t,from.y+(to.y-from.y)*t,from.z+(to.z-from.z)*t};
+    const double hitY=point.y-target.position.y;
+    if(hitY<0.15||hitY>1.88) return best;
+
+    HitRegion region=HitRegion::Leg;
+    if(hitY>=1.60) region=HitRegion::Head;
+    else if(hitY>=1.48) region=HitRegion::Neck;
+    else if(hitY>=1.05) region=(radialDistance>0.22?HitRegion::Arm:HitRegion::Thorax);
+    else if(hitY>=0.72) region=(radialDistance>0.24?HitRegion::Arm:HitRegion::Abdomen);
+    best={true,t,targetIndex,target.id,playerTarget,region,point,radialDistance};
+    return best;
+}
+
 DamageIntersection DamageCore::traceSegment(const Vec3& from,const Vec3& to) const noexcept {
+    return traceSegment(from,to,DamageSource{});
+}
+
+DamageIntersection DamageCore::traceSegment(const Vec3& from,const Vec3& to,const DamageSource& source) const noexcept {
     DamageIntersection best{};
     if(!finiteVec(from)||!finiteVec(to)) return best;
     for (std::size_t i=0;i<targetCount_;++i) {
         const auto& target=targets_[i];
-        if (!target.alive) continue;
-        double t=0.0;
-        const double radialDistance=segmentPointDistanceXZ(from,to,target.position,t);
-        if (radialDistance>target.radius || t>=best.t) continue;
-        const Vec3 point={from.x+(to.x-from.x)*t,from.y+(to.y-from.y)*t,from.z+(to.z-from.z)*t};
-        const double hitY=point.y-target.position.y;
-        if (hitY < 0.15 || hitY > 1.88) continue;
-
-        HitRegion region=HitRegion::Leg;
-        if (hitY>=1.60) region=HitRegion::Head;
-        else if (hitY>=1.48) region=HitRegion::Neck;
-        else if (hitY>=1.05) region=(radialDistance>0.22?HitRegion::Arm:HitRegion::Thorax);
-        else if (hitY>=0.72) region=(radialDistance>0.24?HitRegion::Arm:HitRegion::Abdomen);
-        best={true,t,i,target.id,region,point,radialDistance};
+        const CombatantIdentity targetIdentity{target.id,target.teamId,target.factionId,target.role};
+        const auto candidate=traceTarget(target,i,false,from,to,DamageIntersection{});
+        if(!CombatantCore::canTarget(source,targetIdentity)){
+            if(source.identity.id!=0&&candidate.hit) ++friendlyFireDenials_;
+            continue;
+        }
+        if(candidate.hit&&(!best.hit||candidate.t<best.t)) best=candidate;
+    }
+    if(source.includePlayerTarget&&playerTargetEnabled_){
+        const CombatantIdentity targetIdentity{playerTarget_.id,playerTarget_.teamId,playerTarget_.factionId,playerTarget_.role};
+        const auto candidate=traceTarget(playerTarget_,kPlayerTargetIndex,true,from,to,DamageIntersection{});
+        if(CombatantCore::canTarget(source,targetIdentity)){
+            if(candidate.hit&&(!best.hit||candidate.t<best.t)) best=candidate;
+        }else if(source.identity.id!=0&&candidate.hit) ++friendlyFireDenials_;
     }
     return best;
 }
@@ -127,6 +248,7 @@ void DamageCore::applyStateTransition(DamageTarget& target,
     if(result.killed) ++metrics_.kills;
     target.combatState=next;
     target.alive=next!=CombatState::Dead;
+    if(next==CombatState::Dead) target.bleedingPerSecond=0.0;
 }
 
 void DamageCore::queueResult(DamageResult result) noexcept {
@@ -140,8 +262,10 @@ DamageResult DamageCore::applyIntersection(const DamageIntersection& hit,
                                            std::uint64_t correlationId,
                                            Vec3 impactDirection) noexcept {
     DamageResult out{};
-    if (!hit.hit || hit.targetIndex>=targetCount_ || !std::isfinite(energy) || energy<=0.0 || correlationId==0) return out;
-    auto& target=targets_[hit.targetIndex];
+    if (!hit.hit || (!hit.playerTarget&&hit.targetIndex>=targetCount_) ||
+        (hit.playerTarget&&(!playerTargetEnabled_||hit.targetIndex!=kPlayerTargetIndex)) ||
+        !std::isfinite(energy) || energy<=0.0 || correlationId==0) return out;
+    auto& target=hit.playerTarget?playerTarget_:targets_[hit.targetIndex];
     if (!target.alive || target.id!=hit.targetId) return out;
 
     out.hit=true;
@@ -195,14 +319,22 @@ DamageResult DamageCore::applySegment(const Vec3& from,const Vec3& to,double ene
     return applyIntersection(traceSegment(from,to),energy,correlationId,{to.x-from.x,to.y-from.y,to.z-from.z});
 }
 
+DamageResult DamageCore::applySegment(const Vec3& from,
+                                      const Vec3& to,
+                                      double energy,
+                                      std::uint64_t correlationId,
+                                      const DamageSource& source) noexcept {
+    return applyIntersection(traceSegment(from,to,source),energy,correlationId,
+                             {to.x-from.x,to.y-from.y,to.z-from.z});
+}
+
 void DamageCore::fixedStep(double dt) noexcept {
     if(!std::isfinite(dt)||dt<=0.0) return;
     // Engine ownership guarantees 60 Hz. The clamp is a defensive bound for direct
     // callers/tests and prevents a lifecycle-sized delta from draining a target at once.
     const double safeDt=std::min(dt,0.25);
-    for(std::size_t i=0;i<targetCount_;++i){
-        auto& target=targets_[i];
-        if(!target.alive || target.bleedingPerSecond<=0.0) continue;
+    auto advanceBleeding=[&](DamageTarget& target){
+        if(!target.alive || target.bleedingPerSecond<=0.0) return;
         const double beforeHealth=target.health;
         const CombatState previous=target.combatState;
         const double loss=std::min(target.health,target.bleedingPerSecond*safeDt);
@@ -218,13 +350,16 @@ void DamageCore::fixedStep(double dt) noexcept {
             result.targetId=target.id;
             result.damage=beforeHealth-target.health;
             result.remainingHealth=target.health;
-            result.bleedingPerSecond=target.bleedingPerSecond;
             result.correlationId=target.lastDamageCorrelationId;
             applyStateTransition(target,previous,next,result);
+            result.remainingHealth=target.health;
+            result.bleedingPerSecond=target.bleedingPerSecond;
             ++metrics_.bleedTransitions;
             if(result.correlationId!=0) queueResult(result);
         }
-    }
+    };
+    for(std::size_t i=0;i<targetCount_;++i) advanceBleeding(targets_[i]);
+    if(playerTargetEnabled_) advanceBleeding(playerTarget_);
 }
 
 bool DamageCore::resultBySequence(std::uint64_t sequence,DamageResult& out) const noexcept {
@@ -248,10 +383,22 @@ bool DamageCore::validate() const noexcept {
         if (t.id==0 || !finiteVec(t.position) || !std::isfinite(t.health) || t.health<0.0 || t.health>100.0001 ||
             !std::isfinite(t.radius) || t.radius<=0.0 || !std::isfinite(t.helmetArmorJoules) || t.helmetArmorJoules<0.0 || t.helmetArmorJoules>kHelmetArmorCapacityJ+1e-6 ||
             !std::isfinite(t.torsoArmorJoules) || t.torsoArmorJoules<0.0 || t.torsoArmorJoules>kTorsoArmorCapacityJ+1e-6 ||
-            !std::isfinite(t.bleedingPerSecond) || t.bleedingPerSecond<0.0 || t.bleedingPerSecond>kMaxBleedingPerSecond+1e-6) return false;
+            !std::isfinite(t.bleedingPerSecond) || t.bleedingPerSecond<0.0 || t.bleedingPerSecond>kMaxBleedingPerSecond+1e-6 ||
+            t.teamId==0||t.factionId==0||t.role!=CombatantRole::AI) return false;
         if (t.alive != (t.combatState!=CombatState::Dead)) return false;
         if (t.combatState!=classifyState(t.health,t.bleedingPerSecond)) return false;
         if (t.bleedingPerSecond>0.0 && t.lastDamageCorrelationId==0) return false;
+        for(std::size_t j=i+1;j<targetCount_;++j) if(targets_[j].id==t.id) return false;
+    }
+    if(playerTargetEnabled_){
+        const auto& t=playerTarget_;
+        if(t.id==0||!finiteVec(t.position)||!std::isfinite(t.health)||t.health<0.0||t.health>100.0001||
+           !std::isfinite(t.radius)||t.radius<=0.0||!std::isfinite(t.helmetArmorJoules)||t.helmetArmorJoules<0.0||t.helmetArmorJoules>kHelmetArmorCapacityJ+1e-6||
+           !std::isfinite(t.torsoArmorJoules)||t.torsoArmorJoules<0.0||t.torsoArmorJoules>kTorsoArmorCapacityJ+1e-6||
+           !std::isfinite(t.bleedingPerSecond)||t.bleedingPerSecond<0.0||t.bleedingPerSecond>kMaxBleedingPerSecond+1e-6||
+           t.teamId==0||t.factionId==0||t.role!=CombatantRole::Player||t.alive!=(t.combatState!=CombatState::Dead)||
+           t.combatState!=classifyState(t.health,t.bleedingPerSecond)) return false;
+        for(std::size_t i=0;i<targetCount_;++i) if(targets_[i].id==t.id) return false;
     }
     if(resultSequence_>0 && lastResult_.sequence!=resultSequence_) return false;
     const std::uint64_t retained=std::min<std::uint64_t>(resultSequence_,kResultCapacity);

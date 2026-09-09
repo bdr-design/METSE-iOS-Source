@@ -1,4 +1,5 @@
 #pragma once
+#include "METSECombatantCore.hpp"
 #include "METSEWeaponCore.hpp"
 #include <array>
 #include <cstddef>
@@ -13,6 +14,9 @@ enum class DamageCause : std::uint8_t { Impact=0, Bleeding };
 
 struct DamageTarget {
     std::uint32_t id = 0;
+    TeamId teamId = CombatantCore::kHostileTeam;
+    FactionId factionId = CombatantCore::kHostileFaction;
+    CombatantRole role = CombatantRole::AI;
     Vec3 position{};
     double health = 100.0;
     double radius = 0.34;
@@ -29,6 +33,7 @@ struct DamageIntersection {
     double t = 2.0;
     std::size_t targetIndex = 0;
     std::uint32_t targetId = 0;
+    bool playerTarget = false;
     HitRegion region = HitRegion::None;
     Vec3 point{};
     double radialDistance = 0.0;
@@ -72,16 +77,29 @@ public:
     // one bleeding state transition per target. Keep enough bounded history to publish
     // every same-slice result atomically without dynamic allocation.
     static constexpr std::size_t kResultCapacity = 192;
+    static constexpr std::size_t kPlayerTargetIndex = kMaxTargets;
     static constexpr double kMaxBleedingPerSecond = 4.0;
 
     DamageCore() noexcept;
     void reset() noexcept;
     void fixedStep(double dt) noexcept;
+    // AI target slots remain bounded and preserve the first two legacy training
+    // targets. The player target is held in its own slot so the Build 008/009 target
+    // count contract remains source-compatible while Build 010 adds real player damage.
+    bool configureAgentCount(std::size_t count) noexcept;
+    bool configureTargetIdentity(std::size_t index,CombatantIdentity identity) noexcept;
+    bool configurePlayerTarget(CombatantIdentity identity) noexcept;
+    bool setPlayerTargetEnabled(bool enabled) noexcept;
     // Tactical locomotion is owned by TacticalAICore. EngineCore mirrors the accepted
     // AI position here before BallisticsCore traces targets so DamageCore never becomes
     // a second movement owner.
     bool syncTargetPosition(std::size_t index,std::uint32_t id,Vec3 position) noexcept;
+    bool syncPlayerTargetPosition(CombatantId id,Vec3 position) noexcept;
+    bool syncPlayerTargetState(CombatantId id,bool alive,bool combatCapable,double health01) noexcept;
     [[nodiscard]] DamageIntersection traceSegment(const Vec3& from,const Vec3& to) const noexcept;
+    [[nodiscard]] DamageIntersection traceSegment(const Vec3& from,
+                                                  const Vec3& to,
+                                                  const DamageSource& source) const noexcept;
     DamageResult applyIntersection(const DamageIntersection& hit,
                                    double projectileEnergyJ,
                                    std::uint64_t correlationId,
@@ -90,11 +108,19 @@ public:
                               const Vec3& to,
                               double projectileEnergyJ,
                               std::uint64_t correlationId) noexcept;
+    DamageResult applySegment(const Vec3& from,
+                              const Vec3& to,
+                              double projectileEnergyJ,
+                              std::uint64_t correlationId,
+                              const DamageSource& source) noexcept;
     [[nodiscard]] const std::array<DamageTarget,kMaxTargets>& targets() const noexcept { return targets_; }
     [[nodiscard]] std::size_t targetCount() const noexcept { return targetCount_; }
+    [[nodiscard]] const DamageTarget& playerTarget() const noexcept { return playerTarget_; }
+    [[nodiscard]] bool playerTargetEnabled() const noexcept { return playerTargetEnabled_; }
     [[nodiscard]] std::uint64_t totalHits() const noexcept { return metrics_.hits; }
     [[nodiscard]] std::uint64_t totalKills() const noexcept { return metrics_.kills; }
     [[nodiscard]] std::uint64_t totalIncapacitations() const noexcept { return metrics_.incapacitations; }
+    [[nodiscard]] std::uint64_t friendlyFireDenials() const noexcept { return friendlyFireDenials_; }
     [[nodiscard]] const DamageMetrics& metrics() const noexcept { return metrics_; }
     [[nodiscard]] const DamageResult& lastResult() const noexcept { return lastResult_; }
     [[nodiscard]] std::uint64_t resultSequence() const noexcept { return resultSequence_; }
@@ -109,6 +135,12 @@ private:
     static ArmorZone armorZoneFor(HitRegion region) noexcept;
     static double regionDamageMultiplier(HitRegion region) noexcept;
     static double regionBleedingScale(HitRegion region) noexcept;
+    static DamageIntersection traceTarget(const DamageTarget& target,
+                                          std::size_t targetIndex,
+                                          bool playerTarget,
+                                          const Vec3& from,
+                                          const Vec3& to,
+                                          DamageIntersection best) noexcept;
     void queueResult(DamageResult result) noexcept;
     void applyStateTransition(DamageTarget& target,
                               CombatState previous,
@@ -117,10 +149,13 @@ private:
 
     std::array<DamageTarget,kMaxTargets> targets_{};
     std::size_t targetCount_ = 0;
+    DamageTarget playerTarget_{};
+    bool playerTargetEnabled_ = false;
     DamageMetrics metrics_{};
     std::array<DamageResult,kResultCapacity> results_{};
     DamageResult lastResult_{};
     std::uint64_t resultSequence_ = 0;
+    mutable std::uint64_t friendlyFireDenials_ = 0;
 };
 
 } // namespace metse

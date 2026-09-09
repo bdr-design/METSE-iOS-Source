@@ -14,6 +14,11 @@ struct Projectile {
     double massKg=0.004;
     double ageSeconds=0.0;
     std::uint64_t correlationId=0;
+    CombatantId sourceCombatantId=0;
+    TeamId sourceTeamId=0;
+    FactionId sourceFactionId=0;
+    TargetingPolicy targetingPolicy=TargetingPolicy::HostileOnly;
+    bool includePlayerTarget=false;
     std::uint8_t penetrations=0;
     std::uint8_t ricochets=0;
 };
@@ -31,6 +36,9 @@ struct ProjectileSegmentObservation {
     std::uint64_t correlationId=0;
     bool traversed=false;
     bool terminatedAfterSegment=false;
+    CombatantId sourceCombatantId=0;
+    TeamId sourceTeamId=0;
+    FactionId sourceFactionId=0;
 };
 
 using ProjectileSegmentObserver = void(*)(void *context,

@@ -50,6 +50,7 @@ req('sdk: AVFoundation.framework' in project,'Native audio target must link AVFo
 required=[
     'Engine/Core/METSEInputCommandQueue.hpp','Engine/Core/METSEInputCommandQueue.cpp',
     'Engine/Core/METSECharacterMotor.hpp','Engine/Core/METSECharacterMotor.cpp',
+    'Engine/Core/METSECombatantCore.hpp','Engine/Core/METSECombatantCore.cpp',
     'Engine/Core/METSEWeaponCore.hpp','Engine/Core/METSEWeaponCore.cpp',
     'Engine/Core/METSEWorldCollision.hpp','Engine/Core/METSEWorldCollision.cpp',
     'Engine/Core/METSEMaterialCore.hpp','Engine/Core/METSEMaterialCore.cpp',
@@ -66,7 +67,9 @@ required=[
     'iOS/METSE/ObservatoryViewController.swift','Docs/BUILD009_TACTICAL_COMBAT_PLAN_AR.md',
     'Tests/EngineCoreTests.cpp','Tests/BallisticsMaterialTests.cpp','Tests/DamageAnatomyTests.cpp',
     'Tests/AudioFXVisibilityTests.cpp','Docs/BUILD009_G_AUDIO_FX_VISIBILITY_AR.md',
-    'Scripts/guardrails_009h.py','Docs/BUILD009_H_OBSERVATORY_BLACKBOX_AR.md'
+    'Scripts/guardrails_009h.py','Docs/BUILD009_H_OBSERVATORY_BLACKBOX_AR.md',
+    'Scripts/guardrails_010a.py','Docs/BUILD010_A_COMBATANT_AUTHORITY_AR.md',
+    'Tests/CombatantAuthorityTests.cpp'
 ]
 for relative in required:
     req((ROOT/relative).exists(),f'Required combat source missing: {relative}')
@@ -124,6 +127,8 @@ req('reactionDirection' in damage and 'combatCapable' in damage,'Reaction direct
 req('TargetIncapacitated' in integrity and 'TargetIncapacitated' in engine,'Correlated incapacitation journal event missing')
 req('resultBySequence' in engine and 'DamageCore::kResultCapacity' in engine,'Engine must publish every bounded same-slice damage result')
 req('DamageCore::combatCapable' in engine,'Incapacitated targets must not remain Tactical AI combatants')
+req('CombatantCore' in engine and 'DamageSource' in damage and 'includePlayerTarget' in ballistics,
+    'Build010 combatant/player provenance contract missing')
 
 req('kMaxEntities=32' in visibility or 'kMaxEntities = 32' in visibility,'Visibility cap must be 32')
 req('kCueCapacity=64' in audio_fx and 'kFXCapacity=48' in audio_fx and 'fxDropped' in audio_fx,'Bounded Audio/FX contract missing')
@@ -138,7 +143,7 @@ req('TacticalAICore tacticalAI_' in engine and
     'syncTacticalAICombatState()' in engine and
     'mirrorTacticalPositionsToDamage()' in engine and
     'tacticalAI_.fixedStep' in engine and
-    'stepTacticalAI();\n    ballistics_.fixedStep' in engine,
+    engine.find('stepTacticalAI();')>=0 and engine.find('ballistics_.fixedStep')>engine.find('stepTacticalAI();'),
     'Tactical AI must be simulation-owned and stepped before ballistic target tracing')
 
 req('NSProcessInfoThermalStateSerious' in bridge and 'preferredFramesPerSecond = target' in bridge,'Thermal presentation fallback missing')
@@ -179,7 +184,7 @@ req('Xcode platform compile gate' in workflow,'Full platform type/compile gate m
 req('METSE-v0.3.0-build008-mega-combat-unsigned' in workflow,'Current development artifact name missing')
 
 build=text('Scripts/build_unsigned_ipa.sh')
-for obj in ('METSEInputCommandQueue','METSEWeaponCore','METSEWorldCollision','METSEMaterialCore','METSEDamageCore','METSEBallisticsCore','METSEVisibilityCore','METSEAudioFXCore','METSEObservatoryCore','METSEIntegrityCore','METSETacticalAICore','METSEEngineCore','METSEAudioPresenter'):
+for obj in ('METSEInputCommandQueue','METSEWeaponCore','METSECombatantCore','METSEWorldCollision','METSEMaterialCore','METSEDamageCore','METSEBallisticsCore','METSEVisibilityCore','METSEAudioFXCore','METSEObservatoryCore','METSEIntegrityCore','METSETacticalAICore','METSEEngineCore','METSEAudioPresenter'):
     req(obj in build,f'Build evidence missing for {obj}')
 
 if errors:

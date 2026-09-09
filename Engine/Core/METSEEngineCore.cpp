@@ -22,8 +22,10 @@ void observeProjectileForAudio(void *rawContext,
                                const ProjectileSegmentObservation& segment) noexcept {
     auto *context=static_cast<AudioProjectileObserverContext *>(rawContext);
     if(context==nullptr||context->audio==nullptr) return;
+    const bool derivedHostile=segment.sourceCombatantId!=0&&
+                              segment.sourceCombatantId!=CombatantCore::kPlayerId;
     context->audio->observeProjectileSegment(segment,context->listener,
-                                              context->hostileToListener);
+                                              context->hostileToListener||derivedHostile);
 }
 
 template<std::size_t N>
@@ -61,6 +63,9 @@ void EngineCore::resetState() noexcept {
     weapon_.reset();
     ballistics_.reset();
     damage_.reset();
+    const std::size_t initialAgentCount=config_.maxCombatants>0?
+        std::min<std::size_t>(2u,static_cast<std::size_t>(config_.maxCombatants-1u)):0u;
+    (void)damage_.configureAgentCount(initialAgentCount);
     visibility_.reset();
     tacticalAI_.reset();
     audioFX_.reset();
@@ -74,12 +79,9 @@ void EngineCore::resetState() noexcept {
     observedProjectileContacts_=0;
     observedProjectileTerminalContacts_=0;
     observedProjectileTargetContacts_=0;
-    for(std::size_t i=0;i<damage_.targetCount();++i){
-        const auto& target=damage_.targets()[i];
-        visibility_.syncTarget(i,target.id,target.position,target.alive);
-    }
-    visibility_.update(cameraPosition(),character_.cameraYaw(),world_);
-    initializeTacticalAI();
+    aiShotsFired_=0;
+    aiTargetImpacts_=0;
+    initializeCombatantAuthority();
     syncSnapshot();
 }
 
@@ -98,7 +100,9 @@ void EngineCore::reset() {
 }
 
 bool EngineCore::setActiveCombatants(std::uint32_t count) {
-    return executeAtomic(CommandKind::SetActiveCombatants,count<=config_.maxCombatants,EventKind::CombatantCountChanged,[&](std::uint64_t){
+    return executeAtomic(CommandKind::SetActiveCombatants,count>=1&&count<=config_.maxCombatants&&state_.simulationTick==0,EventKind::CombatantCountChanged,[&](std::uint64_t){
+        if(!damage_.configureAgentCount(static_cast<std::size_t>(count-1u))) return false;
+        initializeCombatantAuthority();
         state_.activeCombatants=count;
         return true;
     });
@@ -135,10 +139,18 @@ void EngineCore::applyDiscrete(const InputCommand& command) noexcept {
                 if(started) ++gameplayDenials_.autoReloadStarted;
                 break;
             }
-            const bool ready=weapon_.canFireNow() && ballistics_.activeCount()<BallisticsCore::kMaxProjectiles;
+            const bool ready=DamageCore::combatCapable(damage_.playerTarget()) &&
+                             weapon_.canFireNow() && ballistics_.activeCount()<BallisticsCore::kMaxProjectiles;
             executeAtomic(CommandKind::FireWeapon,ready,EventKind::ShotFired,[&](std::uint64_t id){
                 ShotSolution shot{};
                 if(!weapon_.fire(cameraPosition(),character_.cameraYaw(),character_.state().pitch,id,shot)) return false;
+                const auto *player=combatants_.recordById(CombatantCore::kPlayerId);
+                if(player==nullptr) return false;
+                shot.sourceCombatantId=player->identity.id;
+                shot.sourceTeamId=player->identity.teamId;
+                shot.sourceFactionId=player->identity.factionId;
+                shot.targetingPolicy=TargetingPolicy::HostileOnly;
+                shot.includePlayerTarget=false;
                 if(!ballistics_.spawn(shot)) return false;
                 audioFX_.observeShot(shot.origin,id,world_);
                 ++state_.shotsFired;
@@ -216,11 +228,45 @@ void EngineCore::initializeTacticalAI() noexcept {
     }
 }
 
+void EngineCore::initializeCombatantAuthority() noexcept {
+    combatants_.reset();
+    const CombatantIdentity playerIdentity{CombatantCore::kPlayerId,
+                                          CombatantCore::kPlayerTeam,
+                                          CombatantCore::kPlayerFaction,
+                                          CombatantRole::Player};
+    (void)combatants_.configure(0,playerIdentity,true,true,true);
+    (void)damage_.configurePlayerTarget(playerIdentity);
+    (void)damage_.setPlayerTargetEnabled(true);
+    const auto& playerState=character_.state();
+    (void)damage_.syncPlayerTargetPosition(playerIdentity.id,{playerState.x,playerState.y,playerState.z});
+
+    for(std::size_t i=0;i<damage_.targetCount();++i){
+        const auto& target=damage_.targets()[i];
+        const CombatantIdentity identity{target.id,
+                                         CombatantCore::kHostileTeam,
+                                         CombatantCore::kHostileFaction,
+                                         CombatantRole::AI};
+        (void)damage_.configureTargetIdentity(i,identity);
+        (void)combatants_.configure(i+1u,identity,target.alive,DamageCore::combatCapable(target),true);
+    }
+    state_.activeCombatants=static_cast<std::uint32_t>(combatants_.count());
+    initializeTacticalAI();
+    visibility_.reset();
+    for(std::size_t i=0;i<damage_.targetCount();++i){
+        const auto& target=damage_.targets()[i];
+        visibility_.syncTarget(i,target.id,target.position,target.alive);
+    }
+    visibility_.update(cameraPosition(),character_.cameraYaw(),world_);
+}
+
 void EngineCore::syncTacticalAICombatState() noexcept {
+    const auto& player=damage_.playerTarget();
+    (void)combatants_.syncState(0,player.id,player.alive,DamageCore::combatCapable(player),player.alive);
     const std::size_t count=std::min(damage_.targetCount(),tacticalAI_.agentCount());
     for(std::size_t i=0;i<count;++i){
         const auto& target=damage_.targets()[i];
         tacticalAI_.syncAgentCombatState(i,target.id,target.alive,DamageCore::combatCapable(target),target.health/100.0);
+        (void)combatants_.syncState(i+1u,target.id,target.alive,DamageCore::combatCapable(target),target.alive);
     }
 }
 
@@ -244,6 +290,27 @@ void EngineCore::stepTacticalAI() noexcept {
     mirrorTacticalPositionsToDamage();
 }
 
+bool EngineCore::spawnAuthorizedAIShots() noexcept {
+    if(!DamageCore::combatCapable(damage_.playerTarget())) return true;
+    const std::size_t freeSlots=BallisticsCore::kMaxProjectiles-ballistics_.activeCount();
+    if(freeSlots==0) return true;
+    std::array<ShotSolution,TacticalAICore::kMaxAgents> shots{};
+    const std::size_t shotCount=tacticalAI_.fireAuthorizedShots(freeSlots,shots);
+    for(std::size_t i=0;i<shotCount;++i){
+        auto& shot=shots[i];
+        const auto *source=combatants_.recordById(shot.sourceCombatantId);
+        if(source==nullptr||source->identity.role!=CombatantRole::AI||!source->alive||!source->combatCapable) return false;
+        shot.sourceTeamId=source->identity.teamId;
+        shot.sourceFactionId=source->identity.factionId;
+        shot.targetingPolicy=TargetingPolicy::HostileOnly;
+        shot.includePlayerTarget=true;
+        if(!ballistics_.spawn(shot)) return false;
+        audioFX_.observeShot(shot.origin,shot.correlationId,world_);
+        ++aiShotsFired_;
+    }
+    return true;
+}
+
 void EngineCore::fixedStep() noexcept {
     const EngineSnapshot stateCheckpoint=state_;
     const CharacterMotor characterCheckpoint=character_;
@@ -252,15 +319,19 @@ void EngineCore::fixedStep() noexcept {
     const DamageCore damageCheckpoint=damage_;
     const VisibilityCore visibilityCheckpoint=visibility_;
     const TacticalAICore aiCheckpoint=tacticalAI_;
+    const CombatantCore combatantsCheckpoint=combatants_;
     const AudioFXCore audioFXCheckpoint=audioFX_;
     const auto contactsCheckpoint=sessionCollisionContacts_;
     const auto frameContactsCheckpoint=frameCollisionContacts_;
     const auto damageSequenceCheckpoint=consumedDamageResultSequence_;
+    const auto aiShotsCheckpoint=aiShotsFired_;
+    const auto aiTargetImpactsCheckpoint=aiTargetImpacts_;
 
     const Vec3 previousPosition{character_.state().x,character_.state().y,character_.state().z};
     const double previousX=character_.state().x;
     const double previousZ=character_.state().z;
-    const CharacterInput input{moveForward_,moveStrafe_,sprintHeld_};
+    const bool playerCombatCapable=DamageCore::combatCapable(damage_.playerTarget());
+    const CharacterInput input=playerCombatCapable?CharacterInput{moveForward_,moveStrafe_,sprintHeld_}:CharacterInput{0.0,0.0,false};
     character_.fixedStep(config_.fixedStepSeconds,input);
 
     const auto collision=world_.resolve(previousX,previousZ,character_.state().x,character_.state().z,
@@ -271,6 +342,8 @@ void EngineCore::fixedStep() noexcept {
 
     audioFX_.fixedStep(config_.fixedStepSeconds);
     const auto& acceptedCharacterState=character_.state();
+    (void)damage_.syncPlayerTargetPosition(CombatantCore::kPlayerId,
+                                           {acceptedCharacterState.x,acceptedCharacterState.y,acceptedCharacterState.z});
     audioFX_.observeMovement(previousPosition,
                              {acceptedCharacterState.x,acceptedCharacterState.y,acceptedCharacterState.z},
                              character_.horizontalSpeed(),acceptedCharacterState.gait,
@@ -281,15 +354,15 @@ void EngineCore::fixedStep() noexcept {
     weapon_.fixedStep(config_.fixedStepSeconds,character_.horizontalSpeed(),moveStrafe_,character_.state().sprinting);
     const bool reloadCompleted=wasReloading && !weapon_.state().reloading;
 
-    // The only production projectile owner today is the player. Segment observation is
-    // wired now, but remains explicitly non-hostile to the player listener until the
-    // later Player/Team/Faction contract can provide real provenance. No AI damage or
-    // synthetic hostile-projectile special case is introduced by Build 009-G.
+    // Segment observation consumes projectile provenance. Player shots remain
+    // non-hostile to the player listener; AI shots derive hostile status from their
+    // CombatantCore identity in the bounded observer callback.
     AudioProjectileObserverContext projectileAudio{&audioFX_,cameraPosition(),false};
     // Tactical locomotion is advanced before projectile tracing. Its accepted position
     // is mirrored one-way into DamageCore, keeping ballistic target truth aligned with
     // the simulation-owned AI position without introducing a second movement owner.
     stepTacticalAI();
+    const bool aiShotMutationValid=spawnAuthorizedAIShots();
     ballistics_.fixedStep(config_.fixedStepSeconds,world_,damage_,
                           &observeProjectileForAudio,&projectileAudio);
     damage_.fixedStep(config_.fixedStepSeconds);
@@ -298,12 +371,14 @@ void EngineCore::fixedStep() noexcept {
     syncTacticalAICombatState();
 
     const auto pendingDamageSequence=damage_.resultSequence();
+    std::uint64_t playerHitsThisSlice=0;
     bool damageLedgerValid=pendingDamageSequence>=damageSequenceCheckpoint &&
                            pendingDamageSequence-damageSequenceCheckpoint<=DamageCore::kResultCapacity;
     if(damageLedgerValid){
         for(std::uint64_t sequence=damageSequenceCheckpoint+1;sequence<=pendingDamageSequence;++sequence){
             DamageResult result{};
             if(!damage_.resultBySequence(sequence,result)){ damageLedgerValid=false; break; }
+            if(result.hit&&result.targetId==damage_.playerTarget().id) ++playerHitsThisSlice;
         }
     }
 
@@ -313,11 +388,12 @@ void EngineCore::fixedStep() noexcept {
     }
     visibility_.update(cameraPosition(),character_.cameraYaw(),world_);
 
+    aiTargetImpacts_+=playerHitsThisSlice;
     state_.simulationSeconds+=config_.fixedStepSeconds;
     ++state_.simulationTick;
     syncSnapshot();
 
-    if(!damageLedgerValid || !validateInvariants()){
+    if(!aiShotMutationValid || !damageLedgerValid || !validateInvariants()){
         state_=stateCheckpoint;
         character_=characterCheckpoint;
         weapon_=weaponCheckpoint;
@@ -325,10 +401,13 @@ void EngineCore::fixedStep() noexcept {
         damage_=damageCheckpoint;
         visibility_=visibilityCheckpoint;
         tacticalAI_=aiCheckpoint;
+        combatants_=combatantsCheckpoint;
         audioFX_=audioFXCheckpoint;
         sessionCollisionContacts_=contactsCheckpoint;
         frameCollisionContacts_=frameContactsCheckpoint;
         consumedDamageResultSequence_=damageSequenceCheckpoint;
+        aiShotsFired_=aiShotsCheckpoint;
+        aiTargetImpacts_=aiTargetImpactsCheckpoint;
         ++simulationInvariantRollbacks_;
         integrity_.appendSystemEvent(EventKind::SimulationInvariantRolledBack,state_.simulationTick);
         return;
@@ -388,6 +467,14 @@ void EngineCore::syncSnapshot() noexcept {
     state_.damageHits=damage_.totalHits();
     state_.damageKills=damage_.totalKills();
     state_.damageIncapacitations=damage_.totalIncapacitations();
+    const auto& playerTarget=damage_.playerTarget();
+    state_.playerHealth=playerTarget.health;
+    state_.playerBleedingPerSecond=playerTarget.bleedingPerSecond;
+    state_.playerCombatState=playerTarget.combatState;
+    state_.aiShotsFired=aiShotsFired_;
+    state_.aiTargetImpacts=aiTargetImpacts_;
+    state_.friendlyFireDenials=damage_.friendlyFireDenials();
+    state_.combatantCount=static_cast<std::uint32_t>(combatants_.count());
     state_.visibility=visibility_.report();
     state_.tacticalAI=tacticalAI_.report();
     state_.audioFX=audioFX_.report();
@@ -414,7 +501,7 @@ bool EngineCore::validateInvariants() const noexcept {
        state_.interpolationAlpha<0.0 || state_.interpolationAlpha>1.0 || !std::isfinite(moveForward_) || !std::isfinite(moveStrafe_) ||
        std::hypot(moveForward_,moveStrafe_)>1.000001) return false;
     if(!character_.validate() || !weapon_.validate() || !world_.validate() || !ballistics_.validate() || !damage_.validate() ||
-       !visibility_.validate() || !tacticalAI_.validate() || !audioFX_.validate() || !inputQueue_.validate()) return false;
+       !visibility_.validate() || !tacticalAI_.validate() || !audioFX_.validate() || !inputQueue_.validate() || !combatants_.validate()) return false;
     if(consumedDamageResultSequence_>damage_.resultSequence() || damage_.resultSequence()-consumedDamageResultSequence_>DamageCore::kResultCapacity) return false;
 
     const double clearance=world_.clearanceHeightAt(character_.state().x,character_.state().z,character_.config().capsuleRadius);
@@ -444,12 +531,25 @@ bool EngineCore::validateInvariants() const noexcept {
        state_.audioFX.fxDropped!=audio.fxDropped || state_.audioFX.activeFX!=audio.activeFX ||
        state_.audioFX.retainedCues!=audio.retainedCues) return false;
 
+    if(state_.activeCombatants!=combatants_.count()||state_.combatantCount!=combatants_.count()||combatants_.count()!=damage_.targetCount()+1u||
+       !damage_.playerTargetEnabled()) return false;
+    const auto& playerTarget=damage_.playerTarget();
+    const auto *playerRecord=combatants_.recordById(CombatantCore::kPlayerId);
+    if(playerRecord==nullptr||playerRecord->identity.role!=CombatantRole::Player||
+       playerTarget.id!=playerRecord->identity.id||playerTarget.teamId!=playerRecord->identity.teamId||
+       playerTarget.factionId!=playerRecord->identity.factionId||playerTarget.alive!=playerRecord->alive||
+       DamageCore::combatCapable(playerTarget)!=playerRecord->combatCapable||
+       !eq(state_.playerHealth,playerTarget.health)||!eq(state_.playerBleedingPerSecond,playerTarget.bleedingPerSecond)||
+       state_.playerCombatState!=playerTarget.combatState) return false;
     const std::size_t synchronizedCount=std::min(damage_.targetCount(),tacticalAI_.agentCount());
     for(std::size_t i=0;i<synchronizedCount;++i){
         const auto& target=damage_.targets()[i];
         const auto& agent=tacticalAI_.agents()[i];
+        const auto *record=combatants_.recordById(target.id);
         if(target.id!=agent.id || !eq(target.position.x,agent.position.x) || !eq(target.position.y,agent.position.y) || !eq(target.position.z,agent.position.z) ||
-           target.alive!=agent.alive || DamageCore::combatCapable(target)!=agent.combatCapable || !eq(std::clamp(target.health/100.0,0.0,1.0),agent.health01)) return false;
+           target.alive!=agent.alive || DamageCore::combatCapable(target)!=agent.combatCapable || !eq(std::clamp(target.health/100.0,0.0,1.0),agent.health01) ||
+           record==nullptr||record->identity.teamId!=target.teamId||record->identity.factionId!=target.factionId||
+           record->alive!=target.alive||record->combatCapable!=DamageCore::combatCapable(target)) return false;
     }
 
     if(damage_.targetCount()>0){
@@ -567,6 +667,10 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     put64(buffer,cursor,state_.ammoInMagazine); put64(buffer,cursor,state_.reserveAmmo);
     putD(buffer,cursor,state_.adsAlpha); putD(buffer,cursor,state_.sprintRecoveryRemaining);
     put64(buffer,cursor,state_.damageHits); put64(buffer,cursor,state_.damageKills); put64(buffer,cursor,state_.damageIncapacitations);
+    putD(buffer,cursor,state_.playerHealth); putD(buffer,cursor,state_.playerBleedingPerSecond);
+    put64(buffer,cursor,static_cast<std::uint64_t>(state_.playerCombatState));
+    put64(buffer,cursor,state_.aiShotsFired); put64(buffer,cursor,state_.aiTargetImpacts);
+    put64(buffer,cursor,state_.friendlyFireDenials); put64(buffer,cursor,combatants_.count());
     put64(buffer,cursor,state_.activeProjectiles); put64(buffer,cursor,state_.tacticalAI.engagedAgents);
     put64(buffer,cursor,state_.tacticalAI.decisionsExecuted);
     put64(buffer,cursor,state_.visibility.full); put64(buffer,cursor,state_.visibility.reduced);
@@ -585,6 +689,8 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     for(std::size_t i=0;i<damage_.targetCount();++i){
         const auto& target=damage_.targets()[i];
         put64(buffer,cursor,target.id);
+        put64(buffer,cursor,target.teamId); put64(buffer,cursor,target.factionId);
+        put64(buffer,cursor,static_cast<std::uint64_t>(target.role));
         putD(buffer,cursor,target.position.x); putD(buffer,cursor,target.position.y); putD(buffer,cursor,target.position.z);
         putD(buffer,cursor,target.health);
         putD(buffer,cursor,target.helmetArmorJoules);
@@ -593,6 +699,15 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         put64(buffer,cursor,target.lastDamageCorrelationId);
         put64(buffer,cursor,static_cast<std::uint64_t>(target.combatState));
         put64(buffer,cursor,target.alive?1u:0u);
+    }
+    for(const auto& projectile:ballistics_.projectiles()){
+        if(!projectile.active) continue;
+        put64(buffer,cursor,projectile.correlationId);
+        put64(buffer,cursor,projectile.sourceCombatantId);
+        put64(buffer,cursor,projectile.sourceTeamId); put64(buffer,cursor,projectile.sourceFactionId);
+        put64(buffer,cursor,static_cast<std::uint64_t>(projectile.targetingPolicy));
+        put64(buffer,cursor,projectile.includePlayerTarget?1u:0u);
+        putD(buffer,cursor,projectile.position.x); putD(buffer,cursor,projectile.position.y); putD(buffer,cursor,projectile.position.z);
     }
     put64(buffer,cursor,tacticalAI_.agentCount());
     for(std::size_t i=0;i<tacticalAI_.agentCount();++i){
@@ -633,6 +748,21 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
             put64(buffer,cursor,static_cast<std::uint64_t>(aiWeapon->reloadKind));
         }
     }
+    const auto& playerTarget=damage_.playerTarget();
+    put64(buffer,cursor,playerTarget.id);
+    put64(buffer,cursor,playerTarget.teamId); put64(buffer,cursor,playerTarget.factionId);
+    putD(buffer,cursor,playerTarget.position.x); putD(buffer,cursor,playerTarget.position.y); putD(buffer,cursor,playerTarget.position.z);
+    putD(buffer,cursor,playerTarget.health); putD(buffer,cursor,playerTarget.bleedingPerSecond);
+    put64(buffer,cursor,static_cast<std::uint64_t>(playerTarget.combatState));
+    put64(buffer,cursor,playerTarget.alive?1u:0u);
+    for(std::size_t i=0;i<combatants_.count();++i){
+        const auto& combatant=combatants_.record(i);
+        put64(buffer,cursor,combatant.identity.id);
+        put64(buffer,cursor,combatant.identity.teamId); put64(buffer,cursor,combatant.identity.factionId);
+        put64(buffer,cursor,static_cast<std::uint64_t>(combatant.identity.role));
+        put64(buffer,cursor,combatant.alive?1u:0u); put64(buffer,cursor,combatant.combatCapable?1u:0u);
+        put64(buffer,cursor,combatant.targetable?1u:0u);
+    }
     return sha256(std::span<const std::uint8_t>(buffer.data(),cursor));
 }
 
@@ -670,6 +800,10 @@ EngineDiagnostics EngineCore::diagnostics() const noexcept {
     diagnostics.damageIncapacitations=damage_.totalIncapacitations();
     diagnostics.damageArmorHits=damage_.metrics().armorHits;
     diagnostics.damageBleedTransitions=damage_.metrics().bleedTransitions;
+    diagnostics.aiShotsFired=aiShotsFired_;
+    diagnostics.aiTargetImpacts=aiTargetImpacts_;
+    diagnostics.friendlyFireDenials=damage_.friendlyFireDenials();
+    diagnostics.combatants=combatants_;
     diagnostics.journalValid=integrity_.verifyJournal();
     diagnostics.worldValid=world_.validate();
     diagnostics.observatoryValid=observatory_.validate();

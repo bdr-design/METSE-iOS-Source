@@ -89,6 +89,7 @@ struct TacticalAIReport {
     std::uint32_t searchAgents = 0;
     std::uint32_t fireAuthorizedAgents = 0;
     std::uint64_t decisionsExecuted = 0;
+    std::uint64_t shotsFired = 0;
     double highestThreat = 0.0;
     AISquadOrder squadOrder = AISquadOrder::Hold;
 };
@@ -114,6 +115,12 @@ public:
                    Vec3 playerPosition,
                    Vec3 playerVelocity,
                    double playerNoise01) noexcept;
+
+    // Returns accepted AI weapon shots in a fixed caller-provided array. The method
+    // consumes only agents already authorized by fresh Vision + WorldCollision and
+    // never performs damage or projectile ownership itself.
+    std::size_t fireAuthorizedShots(std::size_t maxShots,
+                                    std::array<ShotSolution,kMaxAgents>& out) noexcept;
 
     [[nodiscard]] const TacticalAIConfig& config() const noexcept { return config_; }
     [[nodiscard]] const WeaponConfig& weaponConfig() const noexcept { return weaponConfig_; }

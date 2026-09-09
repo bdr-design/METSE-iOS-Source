@@ -13,6 +13,7 @@ mkdir -p "$OUT_DIR"
 COMMON=(
   Engine/Core/METSEInputCommandQueue.cpp
   Engine/Core/METSECharacterMotor.cpp
+  Engine/Core/METSECombatantCore.cpp
   Engine/Core/METSEWeaponCore.cpp
   Engine/Core/METSEWorldCollision.cpp
   Engine/Core/METSEMaterialCore.cpp
@@ -44,3 +45,6 @@ FLAGS=(-std=c++20 -DMETSE_TESTING -Wall -Wextra -Wpedantic -Werror)
 
 "$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/AudioFXVisibilityTests.cpp -o "$OUT_DIR/audio-fx-visibility-tests"
 "$OUT_DIR/audio-fx-visibility-tests"
+
+"$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/CombatantAuthorityTests.cpp -o "$OUT_DIR/combatant-authority-tests"
+"$OUT_DIR/combatant-authority-tests"

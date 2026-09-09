@@ -45,7 +45,7 @@ req('const auto& target=damage_.targets()[i];' in engine and
     '!eq(target.position.z,agent.position.z)' in engine and
     'DamageCore::combatCapable(target)!=agent.combatCapable' in engine,
     'AI/Damage transform and combat-state invariant missing')
-req('stepTacticalAI();\n    ballistics_.fixedStep' in engine,'AI locomotion mirror must occur before ballistic target tracing')
+req(engine.find('stepTacticalAI();')>=0 and engine.find('ballistics_.fixedStep')>engine.find('stepTacticalAI();'),'AI locomotion mirror must occur before ballistic target tracing')
 
 # Bounded action work and no magical-awareness firing.
 for token in ('AIActionState','MoveToCover','Peek','Reload','Suppress','Flank','Retreat','Search'):

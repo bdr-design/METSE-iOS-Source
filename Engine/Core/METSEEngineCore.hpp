@@ -2,6 +2,7 @@
 #include "METSEAudioFXCore.hpp"
 #include "METSEBallisticsCore.hpp"
 #include "METSECharacterMotor.hpp"
+#include "METSECombatantCore.hpp"
 #include "METSEDamageCore.hpp"
 #include "METSEInputCommandQueue.hpp"
 #include "METSEIntegrityCore.hpp"
@@ -34,6 +35,7 @@ struct GameplayDenialMetrics {
     std::uint64_t projectileCapacity = 0;
     std::uint64_t reloadInvalid = 0;
     std::uint64_t autoReloadStarted = 0;
+    std::uint64_t fireCombatDisabled = 0;
 };
 
 struct EngineSnapshot {
@@ -71,6 +73,13 @@ struct EngineSnapshot {
     std::uint64_t damageHits = 0;
     std::uint64_t damageKills = 0;
     std::uint64_t damageIncapacitations = 0;
+    double playerHealth = 100.0;
+    double playerBleedingPerSecond = 0.0;
+    CombatState playerCombatState = CombatState::Effective;
+    std::uint64_t aiShotsFired = 0;
+    std::uint64_t aiTargetImpacts = 0;
+    std::uint64_t friendlyFireDenials = 0;
+    std::uint32_t combatantCount = 0;
     VisibilityReport visibility{};
     TacticalAIReport tacticalAI{};
     AudioFXReport audioFX{};
@@ -141,6 +150,10 @@ struct EngineDiagnostics {
     std::uint64_t damageIncapacitations = 0;
     std::uint64_t damageArmorHits = 0;
     std::uint64_t damageBleedTransitions = 0;
+    std::uint64_t aiShotsFired = 0;
+    std::uint64_t aiTargetImpacts = 0;
+    std::uint64_t friendlyFireDenials = 0;
+    CombatantCore combatants{};
     bool journalValid = false;
     bool worldValid = false;
     bool observatoryValid = false;
@@ -185,6 +198,7 @@ public:
     [[nodiscard]] const std::array<DamageTarget,DamageCore::kMaxTargets>& damageTargets() const noexcept { return damage_.targets(); }
     [[nodiscard]] std::size_t damageTargetCount() const noexcept { return damage_.targetCount(); }
     [[nodiscard]] const TacticalAICore& tacticalAI() const noexcept { return tacticalAI_; }
+    [[nodiscard]] const CombatantCore& combatants() const noexcept { return combatants_; }
     [[nodiscard]] const VisibilityCore& visibilityCore() const noexcept { return visibility_; }
     [[nodiscard]] const AudioFXCore& audioFX() const noexcept { return audioFX_; }
     [[nodiscard]] Sha256Digest deterministicStateHash() const noexcept;
@@ -206,6 +220,7 @@ private:
         VisibilityCore visibility{};
         TacticalAICore tacticalAI{};
         AudioFXCore audioFX{};
+        CombatantCore combatants{};
         double accumulator = 0.0;
         double moveForward = 0.0;
         double moveStrafe = 0.0;
@@ -217,6 +232,10 @@ private:
     bool executeAtomic(CommandKind kind,bool precondition,EventKind event,Apply&& apply) {
         if(!precondition){
             if(kind==CommandKind::FireWeapon){
+                if(!DamageCore::combatCapable(damage_.playerTarget())){
+                    ++gameplayDenials_.fireCombatDisabled;
+                    return false;
+                }
                 const auto& w=weapon_.state();
                 if(w.reloading) ++gameplayDenials_.fireReloading;
                 else if(w.obstructed) ++gameplayDenials_.fireObstructed;
@@ -234,7 +253,7 @@ private:
         }
 
         const std::uint64_t commandId=integrity_.admit(kind,state_.simulationTick);
-        MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,tacticalAI_,audioFX_,accumulatorSeconds_,moveForward_,moveStrafe_,consumedDamageResultSequence_,sprintHeld_};
+        MutationCheckpoint cp{state_,character_,weapon_,ballistics_,damage_,visibility_,tacticalAI_,audioFX_,combatants_,accumulatorSeconds_,moveForward_,moveStrafe_,consumedDamageResultSequence_,sprintHeld_};
         const bool applied=apply(commandId);
         syncSnapshot();
         if(!applied || !validateInvariants()){
@@ -246,6 +265,7 @@ private:
             visibility_=cp.visibility;
             tacticalAI_=cp.tacticalAI;
             audioFX_=cp.audioFX;
+            combatants_=cp.combatants;
             accumulatorSeconds_=cp.accumulator;
             moveForward_=cp.moveForward;
             moveStrafe_=cp.moveStrafe;
@@ -265,9 +285,11 @@ private:
     void fixedStep() noexcept;
     void updateWeaponObstruction() noexcept;
     void initializeTacticalAI() noexcept;
+    void initializeCombatantAuthority() noexcept;
     void syncTacticalAICombatState() noexcept;
     void stepTacticalAI() noexcept;
     void mirrorTacticalPositionsToDamage() noexcept;
+    bool spawnAuthorizedAIShots() noexcept;
     void syncSnapshot() noexcept;
     bool validateInvariants() const noexcept;
     void recordBlackBox(double dt,std::uint32_t steps,bool clamped,double sliceMilliseconds) noexcept;
@@ -283,6 +305,7 @@ private:
     DamageCore damage_{};
     VisibilityCore visibility_{};
     TacticalAICore tacticalAI_{};
+    CombatantCore combatants_{};
     AudioFXCore audioFX_{};
     ObservatoryCore observatory_{};
     InputCommandQueue inputQueue_{};
@@ -306,6 +329,8 @@ private:
     std::uint64_t simulationInvariantRollbacks_ = 0;
     std::uint64_t consumedDamageResultSequence_ = 0;
     std::uint32_t frameCollisionContacts_ = 0;
+    std::uint64_t aiShotsFired_ = 0;
+    std::uint64_t aiTargetImpacts_ = 0;
 };
 
 } // namespace metse
