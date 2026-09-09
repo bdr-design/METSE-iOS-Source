@@ -54,7 +54,7 @@ DamageCore ballisticDamage;BallisticsCore ballistics;ShotSolution fast{};fast.or
 
 VisibilityCore vis;vis.syncTarget(0,1,{5,0,-20},true);vis.syncTarget(1,2,{5,0,76},true);vis.update({5,1.6,-44},0,world);auto vr=vis.report();assert(vr.full==1&&vr.minimal==1&&vis.validate());
 
-ObservatoryCore obs;ObservatoryFrameInput oi{};for(int i=0;i<600;++i){oi.realDeltaSeconds=(i==599)?.05:1.0/60.0;oi.playerZ+=.05;oi.horizontalSpeed=3;oi.inputQueueDepth=i%8;oi.activeProjectiles=i%4;obs.observe(oi);}auto orp=obs.report();assert(orp.onePercentLowFPS>0&&orp.pointOnePercentLowFPS>0&&orp.p99FrameMilliseconds>=16.0&&orp.maxFrameMilliseconds>=49.9&&obs.validate());
+ObservatoryCore obs;ObservatoryFrameInput oi{};for(int i=0;i<600;++i){oi.realDeltaSeconds=(i==599)?.05:1.0/60.0;oi.simulationSliceMilliseconds=(i==599)?25.0:1.2;oi.playerZ+=.05;oi.horizontalSpeed=3;oi.inputQueueDepth=i%8;oi.activeProjectiles=i%4;oi.aiActiveAgents=16;oi.aiLOSAgents=8;oi.aiDecisions=4;oi.projectileContacts=i%3;oi.projectileTerminalContacts=i%2;oi.projectileTargetContacts=i%4;obs.observe(oi);}auto orp=obs.report();assert(orp.onePercentLowFPS>0&&orp.pointOnePercentLowFPS>0&&orp.p99FrameMilliseconds>=16.0&&orp.maxFrameMilliseconds>=49.9&&orp.maxSimulationSliceMilliseconds>=25.0&&orp.simulationSlicesOver20ms==1&&orp.latestAIActiveAgents==16&&orp.latestAILOSAgents==8&&orp.latestAIDecisions==4&&orp.totalProjectileContacts>0&&obs.validate());
 
 EngineCore core;assert(core.config().maxCombatants==32);assert(!core.setActiveCombatants(33));assert(core.setActiveCombatants(16));for(int i=0;i<1000;++i){core.setMovementInput(1,0);core.addLookInput(.0002,0);}assert(core.setSprintHeld(true));assert(core.diagnostics().inputQueue.highWatermark<=InputCommandQueue::kCapacity);for(int i=0;i<120;++i)core.advance(1.0/60.0);assert(core.snapshot().horizontalSpeed>4.0);assert(core.snapshot().sprinting);
 // Fire while sprinting is a gameplay denial, not an integrity rejection.
@@ -73,7 +73,7 @@ assert(core.diagnostics().journalValid);assert(core.diagnostics().worldValid);as
 EngineCore a,b;for(int i=0;i<240;++i){if(i%40==0){a.triggerFire();b.triggerFire();}a.setMovementInput(.7,.2);b.setMovementInput(.7,.2);a.addLookInput(.001,-.0004);b.addLookInput(.001,-.0004);a.advance(1.0/60.0);b.advance(1.0/60.0);}assert(a.deterministicStateHash()==b.deterministicStateHash());
 
 a.setMovementInput(std::numeric_limits<double>::quiet_NaN(),0);assert(a.diagnostics().inputQueue.rejectedInvalid>=1);auto before=a.snapshot();assert(!a.testOnlyExecuteInvariantViolation());auto after=a.snapshot();assert(before.playerX==after.playerX&&before.playerZ==after.playerZ&&a.diagnostics().integrity.commandsRolledBack>=1);
-for(int i=0;i<900;++i){a.advance(1.0/60.0);}assert(a.diagnostics().retainedBlackBoxFrames==EngineCore::kBlackBoxCapacity);assert(a.diagnostics().observatory.retainedFrames==ObservatoryCore::kFrameCapacity);
+for(int i=0;i<900;++i){a.advance(1.0/60.0);}a.advance(1.0);BlackBoxFrame preSpike{};assert(a.newestBlackBoxFrame(0,preSpike)&&preSpike.preSpike&&preSpike.catchUpClamped&&preSpike.simulationSliceMilliseconds>=0.0);assert(a.diagnostics().retainedBlackBoxFrames==EngineCore::kBlackBoxCapacity);assert(a.diagnostics().observatory.retainedFrames==ObservatoryCore::kFrameCapacity);
 std::cout<<"METSE Build 009 Tactical Combat Foundation Tests: PASS\n";
 std::cout<<"METSE Aim Truth + Integrity + Tactical AI Regression Tests: PASS\n";
 std::cout<<"METSE Weapon Handling V2 + Material SSOT Regression Tests: PASS\n";}

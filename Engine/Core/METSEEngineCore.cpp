@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <span>
@@ -70,6 +71,9 @@ void EngineCore::resetState() noexcept {
     simulationInvariantRollbacks_=0;
     consumedDamageResultSequence_=0;
     frameCollisionContacts_=0;
+    observedProjectileContacts_=0;
+    observedProjectileTerminalContacts_=0;
+    observedProjectileTargetContacts_=0;
     for(std::size_t i=0;i<damage_.targetCount();++i){
         const auto& target=damage_.targets()[i];
         visibility_.syncTarget(i,target.id,target.position,target.alive);
@@ -85,6 +89,7 @@ void EngineCore::reset() {
         blackBox_={};
         blackBoxWrite_=0;
         blackBoxCount_=0;
+        preSpikeBlackBoxFrames_=0;
         return true;
     });
 }
@@ -162,15 +167,20 @@ void EngineCore::advance(double realDeltaSeconds) {
     drainInputQueue();
     if(!std::isfinite(realDeltaSeconds) || realDeltaSeconds<=0.0){
         state_.interpolationAlpha=std::clamp(accumulatorSeconds_/config_.fixedStepSeconds,0.0,1.0);
-        recordBlackBox(0.0,0,false);
+        recordBlackBox(0.0,0,false,0.0);
+        observeFrame(0.0,0,false,0.0);
         return;
     }
     const double maxDelta=config_.fixedStepSeconds*config_.maxCatchUpSteps;
     const bool inputClamped=realDeltaSeconds>maxDelta;
     accumulatorSeconds_+=std::min(realDeltaSeconds,maxDelta);
     std::uint32_t steps=0;
+    double sliceMilliseconds=0.0;
     while(accumulatorSeconds_>=config_.fixedStepSeconds && steps<config_.maxCatchUpSteps){
+        const auto sliceStart=std::chrono::steady_clock::now();
         fixedStep();
+        const auto sliceEnd=std::chrono::steady_clock::now();
+        sliceMilliseconds=std::max(sliceMilliseconds,std::chrono::duration<double,std::milli>(sliceEnd-sliceStart).count());
         accumulatorSeconds_-=config_.fixedStepSeconds;
         ++steps;
     }
@@ -181,8 +191,8 @@ void EngineCore::advance(double realDeltaSeconds) {
     }
     const bool clamped=inputClamped||backlog;
     state_.interpolationAlpha=std::clamp(accumulatorSeconds_/config_.fixedStepSeconds,0.0,1.0);
-    recordBlackBox(realDeltaSeconds,steps,clamped);
-    observeFrame(realDeltaSeconds,steps,clamped);
+    recordBlackBox(realDeltaSeconds,steps,clamped,sliceMilliseconds);
+    observeFrame(realDeltaSeconds,steps,clamped,sliceMilliseconds);
 }
 
 void EngineCore::updateWeaponObstruction() noexcept {
@@ -448,7 +458,7 @@ bool EngineCore::validateInvariants() const noexcept {
     return true;
 }
 
-void EngineCore::recordBlackBox(double dt,std::uint32_t steps,bool clamped) noexcept {
+void EngineCore::recordBlackBox(double dt,std::uint32_t steps,bool clamped,double sliceMilliseconds) noexcept {
     BlackBoxFrame frame{};
     frame.simulationTick=state_.simulationTick;
     frame.realDeltaSeconds=dt;
@@ -473,15 +483,25 @@ void EngineCore::recordBlackBox(double dt,std::uint32_t steps,bool clamped) noex
     frame.sprinting=state_.sprinting;
     frame.reloading=state_.reloading;
     frame.catchUpClamped=clamped;
+    frame.simulationSliceMilliseconds=sliceMilliseconds;
+    frame.projectileContacts=ballistics_.metrics().worldImpacts+ballistics_.metrics().targetImpacts;
+    frame.projectileTerminalContacts=ballistics_.metrics().terminalWorldImpacts;
+    frame.projectileTargetContacts=ballistics_.metrics().targetImpacts;
+    frame.aiActiveAgents=state_.tacticalAI.activeAgents;
+    frame.aiLOSAgents=state_.tacticalAI.lineOfSightAgents;
+    frame.aiDecisions=static_cast<std::uint32_t>(std::min<std::uint64_t>(state_.tacticalAI.decisionsExecuted,0xFFFFFFFFull));
+    frame.preSpike=clamped||dt>0.033333333||sliceMilliseconds>20.0;
+    if (frame.preSpike) ++preSpikeBlackBoxFrames_;
     blackBox_[blackBoxWrite_]=frame;
     blackBoxWrite_=(blackBoxWrite_+1)%kBlackBoxCapacity;
     blackBoxCount_=std::min(blackBoxCount_+1,kBlackBoxCapacity);
 }
 
-void EngineCore::observeFrame(double dt,std::uint32_t steps,bool clamped) noexcept {
+void EngineCore::observeFrame(double dt,std::uint32_t steps,bool clamped,double sliceMilliseconds) noexcept {
     ObservatoryFrameInput input{};
     input.simulationTick=state_.simulationTick;
     input.realDeltaSeconds=dt;
+    input.simulationSliceMilliseconds=sliceMilliseconds;
     input.playerX=state_.playerX;
     input.playerZ=state_.playerZ;
     input.horizontalSpeed=state_.horizontalSpeed;
@@ -498,6 +518,17 @@ void EngineCore::observeFrame(double dt,std::uint32_t steps,bool clamped) noexce
     input.visibilityReduced=state_.visibility.reduced;
     input.visibilityMinimal=state_.visibility.minimal;
     input.visibilityDormant=state_.visibility.dormant;
+    input.aiActiveAgents=state_.tacticalAI.activeAgents;
+    input.aiLOSAgents=state_.tacticalAI.lineOfSightAgents;
+    input.aiDecisions=static_cast<std::uint32_t>(std::min<std::uint64_t>(state_.tacticalAI.decisionsExecuted,0xFFFFFFFFull));
+    const auto metrics=ballistics_.metrics();
+    const std::uint64_t projectileContacts=metrics.worldImpacts+metrics.targetImpacts;
+    input.projectileContacts=projectileContacts>=observedProjectileContacts_ ? projectileContacts-observedProjectileContacts_ : projectileContacts;
+    input.projectileTerminalContacts=metrics.terminalWorldImpacts>=observedProjectileTerminalContacts_ ? metrics.terminalWorldImpacts-observedProjectileTerminalContacts_ : metrics.terminalWorldImpacts;
+    input.projectileTargetContacts=metrics.targetImpacts>=observedProjectileTargetContacts_ ? metrics.targetImpacts-observedProjectileTargetContacts_ : metrics.targetImpacts;
+    observedProjectileContacts_=projectileContacts;
+    observedProjectileTerminalContacts_=metrics.terminalWorldImpacts;
+    observedProjectileTargetContacts_=metrics.targetImpacts;
     input.ammoInMagazine=state_.ammoInMagazine;
     input.reserveAmmo=state_.reserveAmmo;
     input.adsAlpha=state_.adsAlpha;
@@ -605,6 +636,7 @@ EngineDiagnostics EngineCore::diagnostics() const noexcept {
     diagnostics.retainedEvents=integrity_.eventCount();
     diagnostics.retainedCommands=integrity_.commandCount();
     diagnostics.retainedBlackBoxFrames=blackBoxCount_;
+    diagnostics.preSpikeBlackBoxFrames=preSpikeBlackBoxFrames_;
     diagnostics.worldObstacleCount=world_.obstacleCount();
     diagnostics.inputQueueDepth=inputQueue_.size();
     diagnostics.sessionCollisionContacts=sessionCollisionContacts_;

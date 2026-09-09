@@ -65,7 +65,8 @@ required=[
     'Engine/Platform/Apple/METSEAudioPresenter.mm','Shaders/METSERenderer.metal',
     'iOS/METSE/ObservatoryViewController.swift','Docs/BUILD009_TACTICAL_COMBAT_PLAN_AR.md',
     'Tests/EngineCoreTests.cpp','Tests/BallisticsMaterialTests.cpp','Tests/DamageAnatomyTests.cpp',
-    'Tests/AudioFXVisibilityTests.cpp','Docs/BUILD009_G_AUDIO_FX_VISIBILITY_AR.md'
+    'Tests/AudioFXVisibilityTests.cpp','Docs/BUILD009_G_AUDIO_FX_VISIBILITY_AR.md',
+    'Scripts/guardrails_009h.py','Docs/BUILD009_H_OBSERVATORY_BLACKBOX_AR.md'
 ]
 for relative in required:
     req((ROOT/relative).exists(),f'Required combat source missing: {relative}')
@@ -172,6 +173,7 @@ for path in ROOT.rglob('*'):
 workflow=text('.github/workflows/build-ios-unsigned.yml')
 req('runs-on: macos-15' in workflow,'Hosted macOS build required')
 req('C++ mega combat foundation tests' in workflow,'C++ combat tests must be mandatory')
+req('python3 Scripts/guardrails_009h.py' in workflow,'009-H guardrail must be part of CI')
 req('Metal compile fast gate' in workflow,'Metal compiler gate must be mandatory')
 req('Xcode platform compile gate' in workflow,'Full platform type/compile gate must be mandatory')
 req('METSE-v0.3.0-build008-mega-combat-unsigned' in workflow,'Current development artifact name missing')
