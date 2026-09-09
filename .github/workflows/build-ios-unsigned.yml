@@ -69,10 +69,14 @@ jobs:
         run: python3 Scripts/guardrails_010e.py
       - name: Build 010-F persistence guardrails
         run: python3 Scripts/guardrails_010f.py
+      - name: Build 010-G combat pressure guardrails
+        run: python3 Scripts/guardrails_010g.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
       - name: Two simulated hours deterministic host soak
         run: bash Scripts/test_engine_soak.sh 7200
+      - name: Two simulated hours repeated combat pressure
+        run: bash Scripts/test_engine_soak.sh 7200 combat
       - name: Swift diagnostic archive regression tests
         run: bash Scripts/test_diagnostic_archive.sh
       - name: Swift syntax fast gate
