@@ -55,10 +55,12 @@ final class METSEDiagnosticArchive {
     func begin(_ record: METSEDiagnosticRecord) throws -> METSEDiagnosticRecord? {
         try validate(record)
         let prior = try read()
+        var fallback: METSEDiagnosticRecord?
+        if prior == nil { fallback = try read(previous: true) }
         if let prior { try write(prior, previous: true) }
         try write(record, previous: false)
         if let prior { return prior }
-        return try read(previous: true)
+        return fallback
     }
     func save(_ record: METSEDiagnosticRecord) throws { try write(record, previous: false) }
 }

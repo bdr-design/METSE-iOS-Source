@@ -28,6 +28,14 @@ enum DiagnosticArchiveTests {
         catch { }
         let corrupt = try String(contentsOf: root.appendingPathComponent("current.json"), encoding: .utf8)
         assert(corrupt == "invalid")
+        // If only a corrupt previous file exists, startup must not create current.
+        let fallbackRoot = root.appendingPathComponent("fallback", isDirectory: true)
+        try FileManager.default.createDirectory(at: fallbackRoot, withIntermediateDirectories: true)
+        try Data("invalid".utf8).write(to: fallbackRoot.appendingPathComponent("previous.json"))
+        let fallbackArchive = METSEDiagnosticArchive(directory: fallbackRoot)
+        do { _ = try fallbackArchive.begin(record("replacement")); assertionFailure("fallback corruption ignored") }
+        catch { }
+        assert(!FileManager.default.fileExists(atPath: fallbackRoot.appendingPathComponent("current.json").path))
         print("010-F bounded atomic diagnostic archive: PASS")
     }
 }
