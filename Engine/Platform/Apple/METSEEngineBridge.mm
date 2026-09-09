@@ -357,6 +357,10 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
         @"aiSuppressed":@(d.tacticalAI.suppressedAgents), @"aiSuppressionChecks":@(d.tacticalAI.suppressionChecksThisStep),
         @"aiSuppressionCheckCap":@(metse::TacticalAICore::kMaxSuppressionChecksPerStep),
         @"aiSuppressionObservations":@(d.tacticalAI.suppressionObservations), @"aiSuppressionBudgetDrops":@(d.tacticalAI.suppressionBudgetDrops),
+        @"aiRecovering":@(d.tacticalAI.recoveringAgents), @"aiConcerned":@(d.tacticalAI.concernedAgents),
+        @"aiInjuryReactions":@(d.tacticalAI.injuryReactions), @"aiWitnessedLosses":@(d.tacticalAI.witnessedLosses),
+        @"aiLossChecks":@(d.tacticalAI.lossChecksThisStep), @"aiLossCheckCap":@(metse::TacticalAICore::kMaxLossChecksPerStep),
+        @"aiLossBudgetDrops":@(d.tacticalAI.lossBudgetDrops), @"aiObservedDamageSequence":@(d.tacticalAI.lastObservedDamageSequence),
         @"aiShotsFiredDiagnostics":@(d.aiShotsFired), @"aiTargetImpactsDiagnostics":@(d.aiTargetImpacts), @"friendlyFireDenialsDiagnostics":@(d.friendlyFireDenials), @"combatantRecords":@(d.combatants.count()), @"combatantActive":@(d.combatantLifecycle.active), @"combatantWounded":@(d.combatantLifecycle.wounded), @"combatantIncapacitated":@(d.combatantLifecycle.incapacitated), @"combatantDead":@(d.combatantLifecycle.dead), @"combatantRemoved":@(d.combatantLifecycle.removed),
         @"collisionContacts":@(d.sessionCollisionContacts), @"worldObstacleCount":@(d.worldObstacleCount),
         @"journalValid":@(d.journalValid), @"worldValid":@(d.worldValid), @"observatoryValid":@(d.observatoryValid), @"queueValid":@(d.inputQueueValid), @"weaponValid":@(d.weaponValid), @"ballisticsValid":@(d.ballisticsValid), @"damageValid":@(d.damageValid), @"visibilityValid":@(d.visibilityValid), @"tacticalAIValid":@(d.tacticalAIValid), @"audioFXValid":@(d.audioFXValid),
@@ -396,6 +400,8 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
         s[@"aiActive"],s[@"aiPeakActive"],s[@"aiLOS"],s[@"aiPeakLOS"],s[@"aiHearing"],s[@"aiEngaged"],s[@"aiSquadOrder"],[s[@"aiHighestThreat"] doubleValue],s[@"aiDecisions"]];
     [report appendFormat:@"010-C suppression active %@ | candidate checks latest slice %@/%@ | accepted exposure observations %@ | budget-truncated segments %@ (session)\n",
         s[@"aiSuppressed"],s[@"aiSuppressionChecks"],s[@"aiSuppressionCheckCap"],s[@"aiSuppressionObservations"],s[@"aiSuppressionBudgetDrops"]];
+    [report appendFormat:@"010-D injury recovering %@ | local loss concern %@ | injury reactions %@ witnessed loss-recipient pairs %@ (session) | witness checks latest slice %@/%@ | budget-truncated loss events %@ | consumed damage sequence %@\n",
+        s[@"aiRecovering"],s[@"aiConcerned"],s[@"aiInjuryReactions"],s[@"aiWitnessedLosses"],s[@"aiLossChecks"],s[@"aiLossCheckCap"],s[@"aiLossBudgetDrops"],s[@"aiObservedDamageSequence"]];
     [report appendFormat:@"Audio cues %@ steps %@ shots O/I %@/%@ crack %@ near %@ | FX active %@ spawned %@ dropped %@ | presentationDrop %@ snapshotDrop %@\n",
         s[@"audioCues"],s[@"audioFootsteps"],s[@"audioOutdoorShots"],s[@"audioIndoorShots"],s[@"audioBulletCracks"],s[@"audioNearMisses"],s[@"fxActive"],s[@"fxSpawned"],s[@"fxDropped"],s[@"audioPresentationDrops"],s[@"audioCueSnapshotDrops"]];
     [report appendFormat:@"Visibility F/R/M/D %@/%@/%@/%@ peak %@/%@/%@/%@ occluded %@ demoted %@\n",

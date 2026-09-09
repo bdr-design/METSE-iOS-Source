@@ -395,6 +395,7 @@ void EngineCore::fixedStep() noexcept {
         for(std::uint64_t sequence=damageSequenceCheckpoint+1;sequence<=pendingDamageSequence;++sequence){
             DamageResult result{};
             if(!damage_.resultBySequence(sequence,result)){ damageLedgerValid=false; break; }
+            if(!tacticalAI_.observeDamageResult(result,combatants_,world_)){ damageLedgerValid=false; break; }
             if(result.hit&&result.targetId==damage_.playerTarget().id) ++playerHitsThisSlice;
         }
     }
@@ -547,6 +548,13 @@ bool EngineCore::validateInvariants() const noexcept {
        state_.tacticalAI.suppressionChecksThisStep!=ai.suppressionChecksThisStep ||
        state_.tacticalAI.suppressionObservations!=ai.suppressionObservations ||
        state_.tacticalAI.suppressionBudgetDrops!=ai.suppressionBudgetDrops ||
+       ai.lastObservedDamageSequence!=damage_.resultSequence() ||
+       state_.tacticalAI.recoveringAgents!=ai.recoveringAgents ||
+       state_.tacticalAI.concernedAgents!=ai.concernedAgents ||
+       state_.tacticalAI.lossChecksThisStep!=ai.lossChecksThisStep ||
+       state_.tacticalAI.injuryReactions!=ai.injuryReactions ||
+       state_.tacticalAI.witnessedLosses!=ai.witnessedLosses ||
+       state_.tacticalAI.lossBudgetDrops!=ai.lossBudgetDrops ||
        state_.visibility.full!=visibility.full || state_.visibility.reduced!=visibility.reduced ||
        state_.visibility.minimal!=visibility.minimal || state_.visibility.dormant!=visibility.dormant ||
        state_.visibility.evaluated!=visibility.evaluated || state_.visibility.occluded!=visibility.occluded ||
@@ -751,6 +759,11 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     put64(buffer,cursor,suppressionReport.suppressionChecksThisStep);
     put64(buffer,cursor,suppressionReport.suppressionObservations);
     put64(buffer,cursor,suppressionReport.suppressionBudgetDrops);
+    put64(buffer,cursor,suppressionReport.lossChecksThisStep);
+    put64(buffer,cursor,suppressionReport.injuryReactions);
+    put64(buffer,cursor,suppressionReport.witnessedLosses);
+    put64(buffer,cursor,suppressionReport.lossBudgetDrops);
+    put64(buffer,cursor,suppressionReport.lastObservedDamageSequence);
     for(std::size_t i=0;i<tacticalAI_.agentCount();++i){
         const auto& agent=tacticalAI_.agents()[i];
         put64(buffer,cursor,agent.id);
@@ -768,6 +781,11 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         putD(buffer,cursor,agent.health01);
         putD(buffer,cursor,agent.suppression01);
         put64(buffer,cursor,agent.lastSuppressionCorrelationId);
+        putD(buffer,cursor,agent.injuryRecoveryRemaining);
+        putD(buffer,cursor,agent.teamLossConcernRemaining);
+        put64(buffer,cursor,agent.lastInjuryCorrelationId);
+        put64(buffer,cursor,agent.lastWitnessedLossId);
+        put64(buffer,cursor,agent.lastWitnessedLossCorrelationId);
         put64(buffer,cursor,agent.actionSequence);
         put64(buffer,cursor,agent.squadSourceAgentId);
         put64(buffer,cursor,agent.coverCandidateIndex);

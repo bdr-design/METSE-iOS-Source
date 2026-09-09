@@ -63,6 +63,8 @@ jobs:
         run: python3 Scripts/guardrails_010b.py
       - name: Build 010-C Tactical Suppression guardrails
         run: python3 Scripts/guardrails_010c.py
+      - name: Build 010-D Injury/Local Team Reaction guardrails
+        run: python3 Scripts/guardrails_010d.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
       - name: Swift syntax fast gate
