@@ -48,3 +48,6 @@ FLAGS=(-std=c++20 -DMETSE_TESTING -Wall -Wextra -Wpedantic -Werror)
 
 "$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/CombatantAuthorityTests.cpp -o "$OUT_DIR/combatant-authority-tests"
 "$OUT_DIR/combatant-authority-tests"
+
+"$CXX" "${FLAGS[@]}" "${COMMON[@]}" Tests/CombatantLifecycleTests.cpp -o "$OUT_DIR/combatant-lifecycle-tests"
+"$OUT_DIR/combatant-lifecycle-tests"

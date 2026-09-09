@@ -69,7 +69,8 @@ required=[
     'Tests/AudioFXVisibilityTests.cpp','Docs/BUILD009_G_AUDIO_FX_VISIBILITY_AR.md',
     'Scripts/guardrails_009h.py','Docs/BUILD009_H_OBSERVATORY_BLACKBOX_AR.md',
     'Scripts/guardrails_010a.py','Docs/BUILD010_A_COMBATANT_AUTHORITY_AR.md',
-    'Tests/CombatantAuthorityTests.cpp'
+    'Tests/CombatantAuthorityTests.cpp','Scripts/guardrails_010b.py',
+    'Docs/BUILD010_B_COMBATANT_LIFECYCLE_AR.md','Tests/CombatantLifecycleTests.cpp'
 ]
 for relative in required:
     req((ROOT/relative).exists(),f'Required combat source missing: {relative}')
@@ -129,6 +130,8 @@ req('resultBySequence' in engine and 'DamageCore::kResultCapacity' in engine,'En
 req('DamageCore::combatCapable' in engine,'Incapacitated targets must not remain Tactical AI combatants')
 req('CombatantCore' in engine and 'DamageSource' in damage and 'includePlayerTarget' in ballistics,
     'Build010 combatant/player provenance contract missing')
+req('CombatantLifecycleState' in engine and 'syncLifecycle' in engine,
+    'Build010-B combatant lifecycle synchronization missing')
 
 req('kMaxEntities=32' in visibility or 'kMaxEntities = 32' in visibility,'Visibility cap must be 32')
 req('kCueCapacity=64' in audio_fx and 'kFXCapacity=48' in audio_fx and 'fxDropped' in audio_fx,'Bounded Audio/FX contract missing')
