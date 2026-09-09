@@ -671,6 +671,9 @@ void EngineCore::observeFrame(double dt,std::uint32_t steps,bool clamped,double 
     input.visibilityMinimal=state_.visibility.minimal;
     input.visibilityDormant=state_.visibility.dormant;
     input.aiActiveAgents=state_.tacticalAI.activeAgents;
+    input.configuredCombatants=state_.combatantCount;
+    input.playerCombatCapable=state_.playerCombatState==CombatState::Effective ||
+                             state_.playerCombatState==CombatState::Wounded;
     input.aiLOSAgents=state_.tacticalAI.lineOfSightAgents;
     input.aiDecisions=static_cast<std::uint32_t>(std::min<std::uint64_t>(state_.tacticalAI.decisionsExecuted,0xFFFFFFFFull));
     const auto metrics=ballistics_.metrics();
@@ -690,6 +693,12 @@ void EngineCore::observeFrame(double dt,std::uint32_t steps,bool clamped,double 
 }
 
 Sha256Digest EngineCore::deterministicStateHash() const noexcept {
+    std::array<std::uint8_t,49152> buffer{};
+    const auto count=serializeState(buffer);
+    return sha256(std::span<const std::uint8_t>(buffer.data(),count));
+}
+
+std::size_t EngineCore::serializeState(std::array<std::uint8_t,49152>& buffer) const noexcept {
     // The hash buffer is fixed and deliberately oversized for the complete bounded
     // 32-agent tactical state. It performs no allocation and makes the deterministic
     // regression sensitive to action/memory/locomotion drift, not just player state.
@@ -698,7 +707,7 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
     constexpr std::size_t hashWords=128+4*VisibilityCore::kMaxEntities+
         16*DamageCore::kMaxTargets+20*BallisticsCore::kMaxProjectiles+
         64*TacticalAICore::kMaxAgents+8*CombatantCore::kMaxCombatants;
-    std::array<std::uint8_t,hashWords*8> buffer{};
+    static_assert(hashWords*8<=49152);
     std::size_t cursor=0;
     put64(buffer,cursor,state_.simulationTick);
     putD(buffer,cursor,state_.simulationSeconds);
@@ -827,15 +836,33 @@ Sha256Digest EngineCore::deterministicStateHash() const noexcept {
         put64(buffer,cursor,combatant.targetable?1u:0u);
         put64(buffer,cursor,static_cast<std::uint64_t>(combatant.lifecycle));
     }
-    return sha256(std::span<const std::uint8_t>(buffer.data(),cursor));
+    return cursor;
 }
 
 EngineDiagnostics EngineCore::diagnostics() const noexcept {
-    EngineDiagnostics diagnostics{};
+    EngineDiagnosticsCapture capture;
+    captureDiagnostics(capture);
+    return capture.finish();
+}
+
+EngineDiagnostics EngineDiagnosticsCapture::finish() const noexcept {
+    auto result=base_;
+    result.stateHash=sha256(std::span<const std::uint8_t>(stateBytes_.data(),stateByteCount_));
+    result.observatory=observatory_.report();
+    result.observatoryValid=observatory_.validate();
+    result.journalValid=integrity_.verifyJournal();
+    return result;
+}
+
+void EngineCore::captureDiagnostics(EngineDiagnosticsCapture& out) const noexcept {
+    out.snapshot=state_;
+    out.observatory_=observatory_;
+    out.integrity_=integrity_;
+    out.stateByteCount_=serializeState(out.stateBytes_);
+    out.base_={};
+    auto& diagnostics=out.base_;
     diagnostics.integrity=integrity_.metrics();
     diagnostics.journalHead=integrity_.journalHead();
-    diagnostics.stateHash=deterministicStateHash();
-    diagnostics.observatory=observatory_.report();
     diagnostics.inputQueue=inputQueue_.metrics();
     diagnostics.ballistics=ballistics_.metrics();
     diagnostics.visibility=visibility_.report();
@@ -869,9 +896,7 @@ EngineDiagnostics EngineCore::diagnostics() const noexcept {
     diagnostics.friendlyFireDenials=damage_.friendlyFireDenials();
     diagnostics.combatants=combatants_;
     diagnostics.combatantLifecycle=combatants_.report();
-    diagnostics.journalValid=integrity_.verifyJournal();
     diagnostics.worldValid=world_.validate();
-    diagnostics.observatoryValid=observatory_.validate();
     diagnostics.inputQueueValid=inputQueue_.validate();
     diagnostics.weaponValid=weapon_.validate();
     diagnostics.ballisticsValid=ballistics_.validate();
@@ -879,7 +904,6 @@ EngineDiagnostics EngineCore::diagnostics() const noexcept {
     diagnostics.visibilityValid=visibility_.validate();
     diagnostics.tacticalAIValid=tacticalAI_.validate();
     diagnostics.audioFXValid=audioFX_.validate();
-    return diagnostics;
 }
 
 bool EngineCore::newestBlackBoxFrame(std::size_t offset,BlackBoxFrame& out) const noexcept {

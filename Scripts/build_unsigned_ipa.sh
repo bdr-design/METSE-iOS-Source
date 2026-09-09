@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 OUT=.ci-output
+SOURCE_REVISION="$(git rev-parse --verify HEAD)"
 rm -rf "$OUT" METSE.xcodeproj
 mkdir -p "$OUT"
 xcodegen generate --spec project.yml
-xcodebuild -project METSE.xcodeproj -scheme METSE -configuration Release -sdk iphoneos -derivedDataPath "$OUT/DerivedData" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tee "$OUT/xcodebuild.log"
+xcodebuild -project METSE.xcodeproj -scheme METSE -configuration Release -sdk iphoneos -derivedDataPath "$OUT/DerivedData" METSE_SOURCE_COMMIT="$SOURCE_REVISION" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tee "$OUT/xcodebuild.log"
 APP="$(find "$OUT/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name 'METSE.app' -print -quit)"
 [[ -n "$APP" ]] || { echo "METSE.app not produced" >&2; exit 30; }
 PLIST="$APP/Info.plist"
-python3 - "$PLIST" <<'PY'
+python3 - "$PLIST" "$SOURCE_REVISION" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as f: p=plistlib.load(f)
 assert p.get('CFBundleShortVersionString')=='0.3.0', p.get('CFBundleShortVersionString')
 assert p.get('CFBundleVersion')=='8', p.get('CFBundleVersion')
+assert len(sys.argv[2])==40 and all(c in '0123456789abcdef' for c in sys.argv[2])
+assert p.get('METSESourceCommit')==sys.argv[2], p.get('METSESourceCommit')
 assert p.get('UIDeviceFamily')==[1], p.get('UIDeviceFamily')
 assert p.get('UILaunchStoryboardName')=='LaunchScreen'
 assert 'UILaunchScreen' not in p

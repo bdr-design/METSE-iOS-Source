@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)triggerFire;
 - (void)reloadWeapon;
 - (NSString *)statusString;
+- (NSString *)stanceName;
 - (NSDictionary<NSString *, id> *)observatorySnapshot;
 - (NSString *)observatoryReportText;
 @end

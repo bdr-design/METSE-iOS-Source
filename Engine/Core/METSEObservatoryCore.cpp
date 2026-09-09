@@ -24,7 +24,8 @@ void ObservatoryCore::observe(const ObservatoryFrameInput& i) noexcept {
     const bool inRange=i.adsAlpha>=0.0 && i.adsAlpha<=1.0 &&
                        i.inputQueueDepth<=kMaxInputQueueDepth && i.activeProjectiles<=kMaxProjectiles &&
                        i.aiActiveAgents<=kMaxCombatants && i.aiLOSAgents<=i.aiActiveAgents &&
-                       visibilityTotal<=kMaxCombatants;
+                       visibilityTotal<=kMaxCombatants && i.configuredCombatants<=kMaxCombatants &&
+                       (i.configuredCombatants==0 || i.aiActiveAgents<i.configuredCombatants);
     if(!inRange){
         ++rejectedSamples_;
         ++rejectedRangeSamples_;
@@ -63,6 +64,14 @@ void ObservatoryCore::observe(const ObservatoryFrameInput& i) noexcept {
     frameCount_=std::min(frameCount_+1,kFrameCapacity);
     ++observedFrames_;
     observedRealSeconds_+=i.realDeltaSeconds;
+    const auto tickDelta=hasPreviousTick_ ? i.simulationTick-previousSimulationTick_ : i.simulationTick;
+    if(!i.catchUpClamped && i.configuredCombatants==kMaxCombatants &&
+       i.aiActiveAgents==kMaxCombatants-1 && i.playerCombatCapable){
+        const double covered=std::min(i.realDeltaSeconds,
+            static_cast<double>(std::min<std::uint64_t>(tickDelta,std::min(i.catchUpSteps,8u)))/60.0);
+        fullCombatantLoadSeconds_+=covered;
+        if(i.activeProjectiles>=64) combinedLoadSeconds_+=covered;
+    }
     sessionFrameTotalMilliseconds_+=ms;
     if(ms>20.0)++framesOver20ms_;
     if(ms>33.333333)++framesOver33ms_;
@@ -130,6 +139,8 @@ ObservatoryReport ObservatoryCore::report() const noexcept {
     o.rejectedRangeSamples=rejectedRangeSamples_;
     o.simulationTickRegressions=simulationTickRegressions_;
     o.observedRealSeconds=observedRealSeconds_;
+    o.fullCombatantLoadSeconds=fullCombatantLoadSeconds_;
+    o.combinedLoadSeconds=combinedLoadSeconds_;
     o.framesOver20ms=framesOver20ms_;
     o.framesOver33ms=framesOver33ms_;
     o.simulationSlicesOver20ms=simulationSlicesOver20ms_;
@@ -226,6 +237,9 @@ bool ObservatoryCore::newestFrame(std::size_t off,ObservatoryFrame&out) const no
 bool ObservatoryCore::validate() const noexcept {
     if(frameCount_>kFrameCapacity || frameWrite_>=kFrameCapacity ||
        !std::isfinite(observedRealSeconds_) || observedRealSeconds_<0.0 ||
+       !std::isfinite(fullCombatantLoadSeconds_) || fullCombatantLoadSeconds_<0.0 ||
+       !std::isfinite(combinedLoadSeconds_) || combinedLoadSeconds_<0.0 ||
+       fullCombatantLoadSeconds_>observedRealSeconds_ || combinedLoadSeconds_>fullCombatantLoadSeconds_ ||
        !std::isfinite(sessionFrameTotalMilliseconds_) || sessionFrameTotalMilliseconds_<0.0 ||
        !std::isfinite(simulationSliceTotalMilliseconds_) || simulationSliceTotalMilliseconds_<0.0 ||
        !std::isfinite(maxSimulationSliceMilliseconds_) || maxSimulationSliceMilliseconds_<0.0 ||
