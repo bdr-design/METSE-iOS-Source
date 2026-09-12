@@ -18,5 +18,6 @@ Native iPhone tactical engine: Swift/UIKit shell → Objective-C++ adapter → p
 - Native instanced battlefield geometry مرتبطة مباشرة بعوائق المحاكاة وموادها
 - Native indexed combatants مرتبطون بهوية وحالة Damage/AI/Visibility ومحجوبون بعمق العالم
 - Native world-space tracers وimpact FX مرتبطة بمخازن Ballistics/AudioFX ومحجوبة بعمق العالم
+- HUD قتالي عربي خفيف مع safe-area controls وfloating joystick وحالة سلاح/صحة مباشرة
 
 لا توجد تبعية WebView أو Unity/Unreal داخل Runtime اللعبة.
