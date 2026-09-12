@@ -21,6 +21,28 @@ struct MeshUniforms {
     float4 baseColorMetallic; float4 lightAndObstruction;
 };
 struct MeshOut { float4 position [[position]]; float3 normal; float3 viewPosition; };
+struct BattlefieldVertex {
+    float3 position [[attribute(0)]];
+    float3 normal [[attribute(1)]];
+};
+struct BattlefieldInstance {
+    float4 centerAndMaterial;
+    float4 halfExtentsAndKind;
+    float4 tintAndRoughness;
+};
+struct BattlefieldScene {
+    float4x4 viewProjection;
+    float4 cameraAndTime;
+    float4 sunAndFog;
+};
+struct BattlefieldOut {
+    float4 position [[position]];
+    float3 worldPosition;
+    float3 localPosition;
+    float3 normal;
+    float4 tintAndRoughness;
+    float2 materialAndKind;
+};
 
 vertex VSOut metseVertex(uint id [[vertex_id]]) {
     float2 positions[3] = {float2(-1, -1), float2(3, -1), float2(-1, 3)};
@@ -33,6 +55,23 @@ vertex MeshOut metseMeshVertex(MeshVertex input [[stage_in]],
     output.position = uniforms.modelViewProjection * local;
     output.viewPosition = (uniforms.model * local).xyz;
     output.normal = normalize((uniforms.model * float4(input.normal, 0.0)).xyz);
+    return output;
+}
+
+vertex BattlefieldOut metseBattlefieldVertex(
+    BattlefieldVertex input [[stage_in]],
+    constant BattlefieldScene &scene [[buffer(1)]],
+    device const BattlefieldInstance *instances [[buffer(2)]],
+    uint instanceID [[instance_id]]) {
+    BattlefieldInstance instance = instances[instanceID];
+    float3 world = instance.centerAndMaterial.xyz + input.position * instance.halfExtentsAndKind.xyz;
+    BattlefieldOut output;
+    output.position = scene.viewProjection * float4(world, 1.0);
+    output.worldPosition = world;
+    output.localPosition = input.position;
+    output.normal = input.normal;
+    output.tintAndRoughness = instance.tintAndRoughness;
+    output.materialAndKind = float2(instance.centerAndMaterial.w, instance.halfExtentsAndKind.w);
     return output;
 }
 
@@ -54,10 +93,6 @@ fragment float4 metseMeshFragment(MeshOut input [[stage_in]],
     return float4(lit * weaponMask, 1.0);
 }
 
-float gridLine(float2 position) {
-    float2 grid = abs(fract(position) - 0.5) / max(fwidth(position), float2(0.0001));
-    return 1.0 - min(min(grid.x, grid.y), 1.0);
-}
 float hash21(float2 position) {
     position = fract(position * float2(123.34, 456.21));
     position += dot(position, position + 45.32); return fract(position.x * position.y);
@@ -67,18 +102,6 @@ float noise21(float2 position) {
     fraction = fraction * fraction * (3.0 - 2.0 * fraction);
     return mix(mix(hash21(cell), hash21(cell + float2(1, 0)), fraction.x),
                mix(hash21(cell + float2(0, 1)), hash21(cell + 1.0), fraction.x), fraction.y);
-}
-float rayBox(float3 origin, float3 direction, float4 footprint, float2 yBounds) {
-    float3 minimum = float3(footprint.x, yBounds.x, footprint.y);
-    float3 maximum = float3(footprint.z, yBounds.y, footprint.w);
-    float3 safeDirection = select(direction, copysign(float3(0.00001), direction),
-                                  abs(direction) < float3(0.00001));
-    float3 inverse = 1.0 / safeDirection;
-    float3 a = (minimum - origin) * inverse, b = (maximum - origin) * inverse;
-    float3 nearValues = min(a, b), farValues = max(a, b);
-    float nearT = max(max(nearValues.x, nearValues.y), nearValues.z);
-    float farT = min(min(farValues.x, farValues.y), farValues.z);
-    if (farT < max(nearT, 0.0)) return 1e20; return nearT > 0 ? nearT : farT;
 }
 float sdBox(float2 position, float2 bounds) {
     float2 delta = abs(position) - bounds;
@@ -110,6 +133,76 @@ float3 materialColor(float material) {
     return float3(0.24, 0.23, 0.20);
 }
 
+fragment float4 metseBattlefieldFragment(
+    BattlefieldOut input [[stage_in]],
+    constant BattlefieldScene &scene [[buffer(1)]]) {
+    float3 normal = normalize(input.normal);
+    float material = round(input.materialAndKind.x);
+    float kind = round(input.materialAndKind.y);
+    float3 world = input.worldPosition;
+    float3 base = input.tintAndRoughness.rgb;
+
+    float2 face = abs(normal.y) > 0.8 ? world.xz : (abs(normal.x) > 0.8 ? world.zy : world.xy);
+    float fineNoise = noise21(face * 2.7) - 0.5;
+    float broadNoise = noise21(face * 0.19) - 0.5;
+    base *= 1.0 + fineNoise * 0.10 + broadNoise * 0.14;
+
+    if (material > 2.5 && material < 3.5) {
+        float row = floor(world.y * 2.55);
+        float2 brickUV = fract(float2(face.x * 1.35 + fmod(row, 2.0) * 0.5, world.y * 2.55));
+        float mortar = 1.0 - step(0.055, min(min(brickUV.x, 1.0 - brickUV.x),
+                                               min(brickUV.y, 1.0 - brickUV.y)));
+        base = mix(base, float3(0.35, 0.30, 0.24), mortar * 0.72);
+    } else if (material > 0.5 && material < 1.5) {
+        float panel = 1.0 - smoothstep(0.025, 0.055,
+            min(abs(fract(face.x * 0.24) - 0.5), abs(fract(face.y * 0.28) - 0.5)));
+        float rust = smoothstep(0.62, 0.92, noise21(face * 0.42 + 8.0));
+        base = mix(base, float3(0.31, 0.14, 0.055), rust * 0.45);
+        base += panel * 0.035;
+    } else if (material > 1.5 && material < 2.5) {
+        float grain = sin(face.x * 21.0 + noise21(face * 0.8) * 5.0) * 0.055;
+        base += grain;
+    } else if (material > 3.5 && material < 4.5) {
+        float reflection = pow(max(dot(reflect(normalize(world - scene.cameraAndTime.xyz), normal),
+                                       normalize(scene.sunAndFog.xyz)), 0.0), 12.0);
+        base += reflection * float3(0.22, 0.31, 0.34);
+    } else if (material > 4.5 && material < 5.5) {
+        float gravel = noise21(world.xz * 5.8) * 0.10;
+        float tire = smoothstep(0.82, 0.96, abs(sin(world.x * 0.53 + noise21(world.xz * 0.11))));
+        base += gravel - tire * 0.045;
+    }
+
+    if (kind == 1.0 && abs(normal.y) < 0.5 && world.y > 1.05 && material != 4.0) {
+        float horizontal = abs(normal.x) > 0.8 ? world.z : world.x;
+        float2 cell = fract(float2(horizontal * 0.29, world.y * 0.47));
+        float window = step(0.20, cell.x) * step(cell.x, 0.72) * step(0.25, cell.y) * step(cell.y, 0.70);
+        base = mix(base, float3(0.055, 0.075, 0.075), window * 0.58);
+    }
+
+    float3 edgeAxes = step(float3(0.90), abs(input.localPosition));
+    float edge = step(1.5, edgeAxes.x + edgeAxes.y + edgeAxes.z);
+    base = mix(base, min(base * 1.28 + float3(0.035), float3(1.0)), edge * 0.50);
+    if (kind == 2.0) {
+        float marker = step(0.5, fract((world.x + world.z) * 0.55));
+        base = mix(base, float3(0.62, 0.43, 0.09), marker * 0.48);
+    }
+
+    float3 light = normalize(scene.sunAndFog.xyz);
+    float diffuse = max(dot(normal, light), 0.0);
+    float skyAmbient = 0.22 + max(normal.y, 0.0) * 0.18;
+    float3 view = normalize(scene.cameraAndTime.xyz - world);
+    float3 halfVector = normalize(light + view);
+    float roughness = clamp(input.tintAndRoughness.w, 0.12, 1.0);
+    float specular = pow(max(dot(normal, halfVector), 0.0), mix(72.0, 7.0, roughness));
+    float3 lit = base * (skyAmbient + diffuse * 0.86) + specular * (1.0 - roughness) * 0.46;
+    float distance = length(scene.cameraAndTime.xyz - world);
+    float fog = 1.0 - exp(-distance * scene.sunAndFog.w);
+    float3 fogColor = float3(0.54, 0.56, 0.52);
+    lit = mix(lit, fogColor, clamp(fog, 0.0, 0.82));
+    lit = lit / (lit + 0.82);
+    return float4(pow(max(lit, 0.0), float3(0.92)), 1.0);
+}
+
 fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &uniforms [[buffer(0)]]) {
     float2 resolution = max(uniforms.timing.yz, float2(1));
     float2 screen = (input.position.xy / resolution) * 2.0 - 1.0; screen.y = -screen.y;
@@ -127,31 +220,8 @@ fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &unifo
     float3 color = mix(float3(0.68, 0.72, 0.70), float3(0.17, 0.31, 0.42), horizon);
     color += haze * float3(0.15, 0.10, 0.045) + sun * float3(1.0, 0.72, 0.36);
 
-    float groundT = ray.y < -0.015 ? -camera.y / ray.y : 1e20, nearest = 1e20;
-    uint nearestIndex = 0, obstacleCount = min((uint)round(uniforms.worldMeta.x), kMaxObstacles);
-    for (uint i = 0; i < obstacleCount; ++i) {
-        float hit = rayBox(camera, ray, uniforms.obstacleBounds[i], uniforms.obstacleMeta[i].xy);
-        if (hit > 0 && hit < nearest) { nearest = hit; nearestIndex = i; }
-    }
-    if (groundT < nearest && groundT < 1e19) {
-        float3 world = camera + ray * groundT; float fog = exp(-groundT * 0.018);
-        float broadNoise = noise21(world.xz * 0.045), grain = noise21(world.xz * 0.72) * 0.035;
-        float tracks = smoothstep(0.96, 0.985, abs(sin(world.x * 0.62 + noise21(world.xz * 0.08))));
-        float3 ground = mix(float3(0.25, 0.20, 0.13), float3(0.43, 0.34, 0.21), broadNoise);
-        ground += grain - tracks * 0.028 + gridLine(world.xz * 0.10) * float3(0.010, 0.012, 0.009);
-        float boundary = max(1.0 - smoothstep(0.06, 0.14,
-            min(abs(world.x - uniforms.worldMeta.y), abs(world.x - uniforms.worldMeta.z))),
-            1.0 - smoothstep(0.06, 0.14,
-            min(abs(world.z - uniforms.worldMeta.w), abs(world.z - uniforms.worldExtra.x))));
-        ground = mix(ground, float3(0.64, 0.45, 0.12), boundary * 0.66); color = mix(color, ground, fog);
-    } else if (nearest < 1e19) {
-        float3 hitPoint = camera + ray * nearest; float2 yBounds = uniforms.obstacleMeta[nearestIndex].xy;
-        float vertical = clamp((hitPoint.y - yBounds.x) / max(0.1, yBounds.y - yBounds.x), 0.0, 1.0);
-        float3 base = materialColor(uniforms.obstacleMeta[nearestIndex].z);
-        float variation = noise21(hitPoint.xz * 2.2 + hitPoint.yy) * 0.12;
-        float edgeShade = smoothstep(0.0, 0.12, vertical) * smoothstep(1.0, 0.88, vertical);
-        color = mix(color, base * (0.52 + edgeShade * 0.52 + variation), exp(-nearest * 0.016));
-    }
+    // World surfaces are rendered by metseBattlefieldVertex/metseBattlefieldFragment
+    // from the same authoritative obstacle snapshot. This pass owns sky and overlays.
 
     uint targetCount = min((uint)round(uniforms.worldExtra.y), kMaxTargets);
     for (uint i = 0; i < targetCount; ++i) {
@@ -192,12 +262,24 @@ fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &unifo
         color += (materialColor(metadata.y) * 1.8 + float3(0.14, 0.10, 0.04)) * mask * data.w * clamp(metadata.z, 0.0, 1.0) * 0.48;
     }
 
+    color = color / (color + 0.82); color = pow(max(color, 0.0), float3(0.92));
+    return float4(color, 1.0);
+}
+
+fragment float4 metseReticleFragment(VSOut input [[stage_in]],
+                                     constant Uniforms &uniforms [[buffer(0)]]) {
+    float2 resolution = max(uniforms.timing.yz, float2(1));
+    float2 screen = (input.position.xy / resolution) * 2.0 - 1.0; screen.y = -screen.y;
+    float ads = clamp(uniforms.weapon.x, 0.0, 1.0);
     float crossScale = mix(1.0, 0.62, ads);
     float horizontal = (1.0 - smoothstep(0.0025, 0.0065, abs(screen.x))) * step(abs(screen.y), 0.024 * crossScale);
     float vertical = (1.0 - smoothstep(0.0025, 0.0065, abs(screen.y))) * step(abs(screen.x), 0.024 * crossScale);
-    color = mix(color, uniforms.weapon.w > 0.5 ? float3(1, 0.25, 0.18) : float3(0.76, 0.90, 0.82), clamp(horizontal + vertical, 0.0, 1.0) * 0.68);
+    float reticle = clamp(horizontal + vertical, 0.0, 1.0) * 0.68;
     float2 muzzle = mix(float2(0.24, -0.30), float2(0.0, -0.12), ads);
-    color += uniforms.timing.w * smoothstep(0.13, 0.0, length(screen - muzzle)) * float3(1.0, 0.48, 0.10);
-    color = color / (color + 0.82); color = pow(max(color, 0.0), float3(0.92));
-    return float4(color, 1.0);
+    float flash = uniforms.timing.w * smoothstep(0.13, 0.0, length(screen - muzzle));
+    float alpha = clamp(reticle + flash, 0.0, 1.0);
+    if (alpha <= 0.001) discard_fragment();
+    float3 reticleColor = uniforms.weapon.w > 0.5 ? float3(1.0, 0.25, 0.18) : float3(0.76, 0.90, 0.82);
+    float3 color = reticleColor * reticle + float3(1.0, 0.48, 0.10) * flash;
+    return float4(color / max(alpha, 0.001), alpha);
 }
