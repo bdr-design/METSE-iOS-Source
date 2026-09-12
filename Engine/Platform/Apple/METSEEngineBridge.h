@@ -15,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)reloadWeapon;
 - (NSString *)statusString;
 - (NSString *)stanceName;
+- (NSDictionary<NSString *, id> *)combatHUDSnapshot;
 - (NSDictionary<NSString *, id> *)observatorySnapshot;
 - (NSString *)observatoryReportText;
 @end
