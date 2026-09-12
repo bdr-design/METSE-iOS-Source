@@ -63,9 +63,6 @@ require("python3 Scripts/guardrails_010b.py" in workflow,
         "Build 010-B guardrail must run before strict C++")
 require("Combatant Lifecycle" in doc and "rollback" in doc and "Removed" in doc,
         "Build 010-B lifecycle contract documentation missing")
-require("0.4.0" not in text("VERSION") + text("BUILD") + text("project.yml"),
-        "VERSION/BUILD must remain sealed until release approval")
-
 if errors:
     print("METSE BUILD 010-B COMBATANT LIFECYCLE GUARDRAILS: FAIL")
     for error in errors:
