@@ -16,5 +16,6 @@ Native iPhone tactical engine: Swift/UIKit shell → Objective-C++ adapter → p
 - Thermal presentation fallback 60→30 مع بقاء simulation fixed-step 60Hz
 - Native Metal indexed-mesh viewmodel مع depth وإضاءة وأصل M4A1 هندسي قابل للاستبدال
 - Native instanced battlefield geometry مرتبطة مباشرة بعوائق المحاكاة وموادها
+- Native indexed combatants مرتبطون بهوية وحالة Damage/AI/Visibility ومحجوبون بعمق العالم
 
 لا توجد تبعية WebView أو Unity/Unreal داخل Runtime اللعبة.
