@@ -73,6 +73,8 @@ jobs:
         run: python3 Scripts/guardrails_010g.py
       - name: Build 011-A native visual guardrails
         run: python3 Scripts/guardrails_011a.py
+      - name: Build 011-B native battlefield guardrails
+        run: python3 Scripts/guardrails_011b.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
       - name: Two simulated hours deterministic host soak
