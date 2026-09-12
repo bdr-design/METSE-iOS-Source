@@ -153,6 +153,8 @@ final class GatewayViewController: UIViewController {
             openGame()
         case .updates:
             navigationController?.pushViewController(UpdateCenterViewController(), animated: true)
+        case .settings:
+            navigationController?.pushViewController(METSESettingsViewController(), animated: true)
         default:
             navigationController?.pushViewController(
                 ModulePlaceholderViewController(destination: destination),
