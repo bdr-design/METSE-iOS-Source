@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "assets": [
+    {
+      "id": "metse.m4a1.viewmodel.engineering.v1",
+      "kind": "firstPersonViewmodel",
+      "mesh": "Assets/Weapons/M4A1/viewmodel.obj",
+      "materials": "Assets/Weapons/M4A1/viewmodel.mtl",
+      "generator": "Tools/generate_viewmodel_asset.py",
+      "ownership": "originalGeneratedForMETSE",
+      "license": "METSE project source license",
+      "thirdPartyContent": false,
+      "qualityTier": "engineeringReference",
+      "replacementContract": "Preserve meter scale, -Z muzzle axis, material groups, and first-person origin when replacing with a production mesh."
+    }
+  ]
+}

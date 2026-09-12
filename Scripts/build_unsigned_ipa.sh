@@ -28,11 +28,15 @@ PY
 LAUNCH="$(find "$APP" -type d -name 'LaunchScreen.storyboardc' -print -quit)"
 [[ -n "$LAUNCH" ]] || { echo "Compiled LaunchScreen.storyboardc missing" >&2; exit 31; }
 BINARY="$APP/METSE"; [[ -f "$BINARY" ]] || { echo "METSE executable missing" >&2; exit 32; }
-for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METSECombatantCore METSEWeaponCore METSEWorldCollision METSEMaterialCore METSEDamageCore METSEBallisticsCore METSEVisibilityCore METSEAudioFXCore METSEObservatoryCore METSETacticalAICore METSEEngineCore METSEAudioPresenter; do
+for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METSECombatantCore METSEWeaponCore METSEWorldCollision METSEMaterialCore METSEDamageCore METSEBallisticsCore METSEVisibilityCore METSEAudioFXCore METSEObservatoryCore METSETacticalAICore METSEEngineCore METSEAudioPresenter METSEViewmodelRenderer; do
   found="$(find "$OUT/DerivedData/Build/Intermediates.noindex" -type f -name "${object}.o" -print -quit)"
   [[ -n "$found" ]] || { echo "${object}.o missing from Release intermediates" >&2; exit 40; }
   echo "Compile evidence: PASS ${object}.o"
 done
+VIEWMODEL_RESOURCE="$(find "$APP" -type f -name 'viewmodel.obj' -print -quit)"
+ASSET_MANIFEST_RESOURCE="$(find "$APP" -type f -name 'asset_manifest.json' -print -quit)"
+[[ -n "$VIEWMODEL_RESOURCE" ]] || { echo "viewmodel.obj missing from app bundle" >&2; exit 41; }
+[[ -n "$ASSET_MANIFEST_RESOURCE" ]] || { echo "asset_manifest.json missing from app bundle" >&2; exit 42; }
 mkdir -p "$OUT/Payload"; cp -R "$APP" "$OUT/Payload/METSE.app"
 (cd "$OUT" && zip -qry METSE_v0.3.0_build008_unsigned.ipa Payload)
 unzip -t "$OUT/METSE_v0.3.0_build008_unsigned.ipa" >/dev/null
