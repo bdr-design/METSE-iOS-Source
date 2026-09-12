@@ -22,6 +22,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSMotionUsageDescription</key>
+    <string>يُستخدم الجيروسكوب اختياريًا لتحسين دقة التصويب أثناء التصويب (Aim Down Sights)، فقط عند تفعيله من الإعدادات.</string>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     <key>UIDeviceFamily</key>

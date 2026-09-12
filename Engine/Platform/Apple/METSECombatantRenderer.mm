@@ -162,6 +162,12 @@ bool LoadCombatantBodyAsset(std::vector<CombatantVertex>& vertices, std::vector<
     MDLMesh *mesh = meshes.firstObject;
     if (mesh.vertexCount == 0 || mesh.vertexBuffers.count == 0) return false;
     id<MDLMeshBuffer> vertexBuffer = mesh.vertexBuffers.firstObject;
+    // Defensive: confirm the buffer is actually as long as our fixed 24-byte-stride
+    // assumption requires BEFORE reading a single byte. A USD importer is not
+    // guaranteed to repack to exactly the requested descriptor in every case: if the
+    // length does not match, fall back rather than risk an out-of-bounds read.
+    const NSUInteger expectedVertexBytes = (NSUInteger)mesh.vertexCount * 24;
+    if (vertexBuffer.length < expectedVertexBytes) return false;
     MDLMeshBufferMap *vertexMap = [vertexBuffer map];
     if (!vertexMap || !vertexMap.bytes) return false;
     const uint8_t *rawVertices = (const uint8_t *)vertexMap.bytes;
@@ -179,9 +185,11 @@ bool LoadCombatantBodyAsset(std::vector<CombatantVertex>& vertices, std::vector<
     for (MDLSubmesh *submesh in mesh.submeshes) {
         id<MDLMeshBuffer> indexBuffer = submesh.indexBuffer;
         if (!indexBuffer) return false;
+        const NSUInteger indexCount = submesh.indexCount;
+        const NSUInteger indexComponentSize = (submesh.indexType == MDLIndexBitDepthUInt32) ? 4 : (submesh.indexType == MDLIndexBitDepthUInt16) ? 2 : 0;
+        if (indexComponentSize == 0 || indexBuffer.length < indexCount * indexComponentSize) return false;
         MDLMeshBufferMap *indexMap = [indexBuffer map];
         if (!indexMap || !indexMap.bytes) return false;
-        const NSUInteger indexCount = submesh.indexCount;
         if (submesh.indexType == MDLIndexBitDepthUInt16) {
             const uint16_t *idx = (const uint16_t *)indexMap.bytes;
             loadedIndices.insert(loadedIndices.end(), idx, idx + indexCount);

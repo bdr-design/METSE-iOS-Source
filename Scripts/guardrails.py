@@ -58,6 +58,13 @@ if plist.exists():
     req(info.get('UIRequiresFullScreen') is True,'Full screen required')
     req(info.get('UIStatusBarHidden') is True,'Status bar hidden required')
     req(info.get('UISupportedInterfaceOrientations')==['UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'],'Landscape-only required')
+    # Learned from a real crash on device: CMMotionManager.startDeviceMotionUpdates
+    # terminates the app immediately if this key is absent, and nothing in Xcode's
+    # build step catches that - only a real device run does. Enforce it structurally
+    # instead of relying on remembering it next time CoreMotion is touched.
+    if 'CoreMotion' in text('iOS/METSE/GameViewController.swift'):
+        req(bool(info.get('NSMotionUsageDescription')),
+            'NSMotionUsageDescription required in Info.plist whenever CoreMotion is used - missing this crashes on first launch, not at compile time')
 if launch.exists():
     try:
         root=ET.parse(launch).getroot()
