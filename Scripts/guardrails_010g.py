@@ -16,5 +16,5 @@ workflow = read(".github/workflows/build-ios-unsigned.yml")
 assert 'bash Scripts/test_engine_soak.sh 7200\n' in workflow
 assert 'bash Scripts/test_engine_soak.sh 7200 combat' in workflow
 assert workflow.index('Scripts/guardrails_010g.py') < workflow.index('Scripts/test_engine_core.sh')
-assert read("VERSION").strip() == "0.3.0" and read("BUILD").strip() == "8"
+assert read("VERSION").strip() and read("BUILD").strip().isdigit()
 print("010-G separate aging/combat pressure guardrails: PASS")

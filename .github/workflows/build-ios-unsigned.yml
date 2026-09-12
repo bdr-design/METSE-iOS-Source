@@ -131,18 +131,18 @@ jobs:
       - name: Upload verified IPA
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-v0.3.0-build008-mega-combat-unsigned
+          name: METSE-v0.4.0-build012-mega-combat-unsigned
           if-no-files-found: error
           retention-days: 14
           path: |
-            .ci-output/METSE_v0.3.0_build008_unsigned.ipa
-            .ci-output/METSE_v0.3.0_build008_unsigned.ipa.sha256
+            .ci-output/METSE_v0.4.0_build012_unsigned.ipa
+            .ci-output/METSE_v0.4.0_build012_unsigned.ipa.sha256
             .ci-output/xcodebuild.log
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-build008-failure-diagnostics
+          name: METSE-build012-failure-diagnostics
           if-no-files-found: ignore
           retention-days: 7
           path: |
