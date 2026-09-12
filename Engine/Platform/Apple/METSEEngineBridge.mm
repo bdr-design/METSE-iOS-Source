@@ -319,6 +319,26 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     return METSEStanceName(stance);
 }
 
+- (NSDictionary<NSString *, id> *)combatHUDSnapshot {
+    os_unfair_lock_lock(&_coreLock);
+    const auto state = _core.snapshot();
+    os_unfair_lock_unlock(&_coreLock);
+    os_unfair_lock_lock(&_telemetryLock);
+    const NSInteger presentationFPS = _presentationFPS;
+    os_unfair_lock_unlock(&_telemetryLock);
+    return @{
+        @"ammo": @(state.ammoInMagazine),
+        @"reserveAmmo": @(state.reserveAmmo),
+        @"health": @(state.playerHealth),
+        @"stance": METSEStanceName(state.stance),
+        @"reloading": @(state.reloading),
+        @"reloadRemaining": @(state.reloadRemaining),
+        @"obstructed": @(state.weaponObstructed),
+        @"engagedAI": @(state.tacticalAI.engagedAgents),
+        @"presentationFPS": @(presentationFPS)
+    };
+}
+
 - (NSDictionary<NSString *, id> *)observatorySnapshot {
     // Capture only diagnostics inputs; expensive verification stays outside ownership.
     metse::EngineDiagnosticsCapture capture;
