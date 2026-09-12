@@ -33,8 +33,10 @@ for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METS
   [[ -n "$found" ]] || { echo "${object}.o missing from Release intermediates" >&2; exit 40; }
   echo "Compile evidence: PASS ${object}.o"
 done
-[[ -f "$APP/viewmodel.obj" || -f "$APP/Assets/Weapons/M4A1/viewmodel.obj" ]] || { echo "viewmodel.obj missing from app bundle" >&2; exit 41; }
-[[ -f "$APP/asset_manifest.json" ]] || { echo "asset_manifest.json missing from app bundle" >&2; exit 42; }
+VIEWMODEL_RESOURCE="$(find "$APP" -type f -name 'viewmodel.obj' -print -quit)"
+ASSET_MANIFEST_RESOURCE="$(find "$APP" -type f -name 'asset_manifest.json' -print -quit)"
+[[ -n "$VIEWMODEL_RESOURCE" ]] || { echo "viewmodel.obj missing from app bundle" >&2; exit 41; }
+[[ -n "$ASSET_MANIFEST_RESOURCE" ]] || { echo "asset_manifest.json missing from app bundle" >&2; exit 42; }
 mkdir -p "$OUT/Payload"; cp -R "$APP" "$OUT/Payload/METSE.app"
 (cd "$OUT" && zip -qry METSE_v0.3.0_build008_unsigned.ipa Payload)
 unzip -t "$OUT/METSE_v0.3.0_build008_unsigned.ipa" >/dev/null
