@@ -64,6 +64,16 @@ struct CombatantOut {
     float4 state;
     float2 partAndIdentity;
 };
+struct BallisticFXVertex { float3 position [[attribute(0)]]; float3 normal [[attribute(1)]]; };
+struct BallisticFXInstance { float4 positionAndKind; float4 directionAndLength; float4 materialSizeLife; };
+struct BallisticFXScene { float4x4 viewProjection; float4 cameraAndTime; float4 sunAndFog; };
+struct BallisticFXOut {
+    float4 position [[position]];
+    float3 worldPosition;
+    float3 normal;
+    float3 localPosition;
+    float4 kindMaterialLife;
+};
 
 vertex VSOut metseVertex(uint id [[vertex_id]]) {
     float2 positions[3] = {float2(-1, -1), float2(3, -1), float2(-1, 3)};
@@ -129,6 +139,29 @@ vertex CombatantOut metseCombatantVertex(
     output.normal=normalize(normal); output.state=instance.healthTierStateLOS;
     output.partAndIdentity=float2(input.positionAndPart.w,instance.actionIdentityPhase.y);
     return output;
+}
+
+vertex BallisticFXOut metseBallisticFXVertex(
+    BallisticFXVertex input [[stage_in]],
+    constant BallisticFXScene &scene [[buffer(1)]],
+    device const BallisticFXInstance *instances [[buffer(2)]],
+    uint instanceID [[instance_id]]) {
+    BallisticFXInstance instance=instances[instanceID];
+    float kind=instance.positionAndKind.w, life=clamp(instance.materialSizeLife.z,0.0,1.0);
+    float3 forward=normalize(instance.directionAndLength.xyz);
+    float3 reference=abs(forward.y)<.94?float3(0,1,0):float3(1,0,0);
+    float3 right=normalize(cross(reference,forward)),up=normalize(cross(forward,right));
+    float size=max(instance.materialSizeLife.y,.006);
+    float3 extent;
+    if(kind<.5) extent=float3(size,size,instance.directionAndLength.w*.5);
+    else if(kind<1.5) extent=float3(size*(1.1-life*.6),size*(.72-life*.32),size*(1.1-life*.6));
+    else extent=float3(size*life,size*life,size*life*1.7);
+    float3 center=instance.positionAndKind.xyz-(kind<.5?forward*extent.z:float3(0));
+    float3 world=center+right*input.position.x*extent.x+up*input.position.y*extent.y+forward*input.position.z*extent.z;
+    float3 normal=normalize(right*input.normal.x+up*input.normal.y+forward*input.normal.z);
+    BallisticFXOut output;output.position=scene.viewProjection*float4(world,1);output.worldPosition=world;
+    output.normal=normal;output.localPosition=input.position;
+    output.kindMaterialLife=float4(kind,instance.materialSizeLife.x,life,size);return output;
 }
 
 fragment float4 metseMeshFragment(MeshOut input [[stage_in]],
@@ -281,6 +314,27 @@ fragment float4 metseCombatantFragment(CombatantOut input [[stage_in]],
     return float4(pow(max(lit,0.0),float3(.92)),1.0);
 }
 
+fragment float4 metseBallisticFXFragment(BallisticFXOut input [[stage_in]],
+                                         constant BallisticFXScene &scene [[buffer(1)]]) {
+    float kind=input.kindMaterialLife.x,material=input.kindMaterialLife.y,life=input.kindMaterialLife.z;
+    float3 color;
+    if(kind<.5){
+        float core=1.0-smoothstep(.12,1.0,length(input.localPosition.xy));
+        color=mix(float3(1.0,.24,.035),float3(1.0,.91,.52),core)*1.8;
+    } else if(kind>1.5){
+        color=float3(1.0,.38,.055)*(1.2+life);
+    } else {
+        color=materialColor(material);
+        float3 n=normalize(input.normal),light=normalize(scene.sunAndFog.xyz);
+        color*=.22+max(dot(n,light),0.0)*.84;
+        color+=noise21(input.worldPosition.xz*8.0+input.worldPosition.yy)*.075;
+    }
+    float distance=length(scene.cameraAndTime.xyz-input.worldPosition);
+    float fog=clamp(1.0-exp(-distance*scene.sunAndFog.w),0.0,kind < .5 ? .44 : .78);
+    color=mix(color,float3(.54,.56,.52),fog);
+    return float4(pow(max(color/(color+.82),0.0),float3(.92)),1.0);
+}
+
 fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &uniforms [[buffer(0)]]) {
     float2 resolution = max(uniforms.timing.yz, float2(1));
     float2 screen = (input.position.xy / resolution) * 2.0 - 1.0; screen.y = -screen.y;
@@ -305,21 +359,8 @@ fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &unifo
     // depth-tested geometry consumes the same snapshot in METSECombatantRenderer.
     float4 tm=uniforms.targetMeta[0]; float tier=tm.x; color+=float3(tier*0.0);
 
-    uint projectileCount = min((uint)round(uniforms.worldExtra.z), kMaxProjectiles);
-    for (uint i = 0; i < projectileCount; ++i) {
-        float3 projected = projectWorld(uniforms.projectilePositions[i].xyz, camera, forward, right, up, tanHalfVFov, aspect);
-        if (projected.z > 0 && abs(projected.x) < 2 && abs(projected.y) < 2)
-            color += smoothstep(0.018, 0.002, length(screen - projected.xy)) * float3(1.0, 0.62, 0.18);
-    }
-    uint fxCount = min((uint)round(uniforms.presentationMeta.x), kMaxFX);
-    for (uint i = 0; i < fxCount; ++i) {
-        float4 data = uniforms.fxData[i], metadata = uniforms.fxMeta[i];
-        float3 projected = projectWorld(data.xyz, camera, forward, right, up, tanHalfVFov, aspect);
-        if (projected.z <= 0.05 || abs(projected.x) > 2 || abs(projected.y) > 2) continue;
-        float radius = max(0.008, (0.09 + 0.16 * (1.0 - data.w)) / (projected.z * tanHalfVFov * aspect));
-        float mask = 1.0 - smoothstep(radius * 0.25, radius, length(screen - projected.xy));
-        color += (materialColor(metadata.y) * 1.8 + float3(0.14, 0.10, 0.04)) * mask * data.w * clamp(metadata.z, 0.0, 1.0) * 0.48;
-    }
+    // Projectile and impact FX arrays remain in the diagnostic ABI. Their visible
+    // representation is native world geometry in METSEBallisticFXRenderer.
 
     color = color / (color + 0.82); color = pow(max(color, 0.0), float3(0.92));
     return float4(color, 1.0);
