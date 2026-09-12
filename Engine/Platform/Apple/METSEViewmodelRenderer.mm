@@ -141,6 +141,16 @@ static vector_float4 METSEColorForMaterial(NSString *name) {
             if ([candidate.lastPathComponent isEqualToString:@"viewmodel.obj"]) { assetURL = candidate; break; }
         }
     }
+    if (!assetURL && bundle.resourceURL) {
+        NSDirectoryEnumerator<NSURL *> *enumerator = [NSFileManager.defaultManager
+            enumeratorAtURL:bundle.resourceURL
+            includingPropertiesForKeys:nil
+            options:NSDirectoryEnumerationSkipsHiddenFiles
+            errorHandler:nil];
+        for (NSURL *candidate in enumerator) {
+            if ([candidate.lastPathComponent isEqualToString:@"viewmodel.obj"]) { assetURL = candidate; break; }
+        }
+    }
     if (!assetURL) return self;
 
     MTKMeshBufferAllocator *allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:device];
