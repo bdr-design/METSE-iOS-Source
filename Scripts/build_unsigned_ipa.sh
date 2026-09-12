@@ -28,7 +28,7 @@ PY
 LAUNCH="$(find "$APP" -type d -name 'LaunchScreen.storyboardc' -print -quit)"
 [[ -n "$LAUNCH" ]] || { echo "Compiled LaunchScreen.storyboardc missing" >&2; exit 31; }
 BINARY="$APP/METSE"; [[ -f "$BINARY" ]] || { echo "METSE executable missing" >&2; exit 32; }
-for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METSECombatantCore METSEWeaponCore METSEWorldCollision METSEMaterialCore METSEDamageCore METSEBallisticsCore METSEVisibilityCore METSEAudioFXCore METSEObservatoryCore METSETacticalAICore METSEEngineCore METSEAudioPresenter METSEViewmodelRenderer; do
+for object in METSEIntegrityCore METSEInputCommandQueue METSECharacterMotor METSECombatantCore METSEWeaponCore METSEWorldCollision METSEMaterialCore METSEDamageCore METSEBallisticsCore METSEVisibilityCore METSEAudioFXCore METSEObservatoryCore METSETacticalAICore METSEEngineCore METSEAudioPresenter METSEBattlefieldRenderer METSEViewmodelRenderer; do
   found="$(find "$OUT/DerivedData/Build/Intermediates.noindex" -type f -name "${object}.o" -print -quit)"
   [[ -n "$found" ]] || { echo "${object}.o missing from Release intermediates" >&2; exit 40; }
   echo "Compile evidence: PASS ${object}.o"
