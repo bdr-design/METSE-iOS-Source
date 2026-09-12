@@ -22,8 +22,8 @@ targets:
       - path: iOS/METSE
       - path: Engine
       - path: Shaders
-    resources:
       - path: Content
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bdrdesign.metse
