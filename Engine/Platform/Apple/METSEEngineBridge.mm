@@ -1,6 +1,7 @@
 #import "METSEEngineBridge.h"
 #import "METSEAudioPresenter.h"
 #import "METSEBattlefieldRenderer.h"
+#import "METSECombatantRenderer.h"
 #import "METSEViewmodelRenderer.h"
 #import <QuartzCore/QuartzCore.h>
 #import <os/lock.h>
@@ -62,6 +63,7 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
 @property(nonatomic, strong) id<MTLRenderPipelineState> pipeline;
 @property(nonatomic, strong) id<MTLRenderPipelineState> overlayPipeline;
 @property(nonatomic, strong) METSEBattlefieldRenderer *battlefieldRenderer;
+@property(nonatomic, strong) METSECombatantRenderer *combatantRenderer;
 @property(nonatomic, strong) METSEViewmodelRenderer *viewmodelRenderer;
 @end
 
@@ -172,8 +174,14 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
         library:library
         colorPixelFormat:view.colorPixelFormat
         depthPixelFormat:view.depthStencilPixelFormat];
+    _combatantRenderer = [[METSECombatantRenderer alloc]
+        initWithDevice:device
+        library:library
+        colorPixelFormat:view.colorPixelFormat
+        depthPixelFormat:view.depthStencilPixelFormat];
     NSLog(@"METSE viewmodel: %@", _viewmodelRenderer.assetStatus);
     NSLog(@"METSE battlefield: %@", _battlefieldRenderer.status);
+    NSLog(@"METSE combatants: %@", _combatantRenderer.status);
     _audioPresenter=[METSEAudioPresenter new];
     view.delegate = self;
     return self;
@@ -506,9 +514,10 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     std::array<metse::Projectile, metse::BallisticsCore::kMaxProjectiles> projectiles{};
     std::array<metse::DamageTarget, metse::DamageCore::kMaxTargets> targets{};
     std::array<metse::VisibilityEntity, metse::VisibilityCore::kMaxEntities> visibilityEntities{};
+    std::array<metse::TacticalAgentState, metse::TacticalAICore::kMaxAgents> tacticalAgents{};
     std::array<metse::FXInstance, metse::AudioFXCore::kFXCapacity> effects{};
     std::array<metse::AudioCue, metse::AudioFXCore::kCueCapacity> pendingAudioCues{};
-    std::size_t obstacleCount=0,targetCount=0,visibilityCount=0,pendingAudioCueCount=0;
+    std::size_t obstacleCount=0,targetCount=0,visibilityCount=0,tacticalAgentCount=0,pendingAudioCueCount=0;
     uint64_t cueSnapshotDropsThisFrame=0;
     double minX=0,maxX=0,minZ=0,maxZ=0;
 
@@ -526,6 +535,8 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     targetCount = _core.damageTargetCount();
     visibilityEntities = _core.visibilityCore().entities();
     visibilityCount = _core.visibilityCore().count();
+    tacticalAgents = _core.tacticalAI().agents();
+    tacticalAgentCount = _core.tacticalAI().agentCount();
     effects = _core.audioFX().fxInstances();
     const uint64_t latestCueSequence=_core.audioFX().latestCueSequence();
     if(_lastConsumedAudioCueSequence>latestCueSequence) _lastConsumedAudioCueSequence=0;
@@ -672,6 +683,35 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
                                            roll:(float)(state.cameraRoll + state.cameraLean)
                                        adsAlpha:(float)state.adsAlpha
                               simulationSeconds:(float)state.simulationSeconds];
+    std::array<METSECombatantRenderState, kRenderTargetCap> renderCombatants{};
+    const NSUInteger combatantCount=std::min({targetCount,visibilityCount,tacticalAgentCount,
+                                               static_cast<std::size_t>(kRenderTargetCap)});
+    for(NSUInteger index=0;index<combatantCount;++index){
+        const auto &target=targets[index];
+        const auto &visibility=visibilityEntities[index];
+        const auto &agent=tacticalAgents[index];
+        const bool identityMatches=target.id==visibility.id&&target.id==agent.id;
+        renderCombatants[index]={
+            (float)target.position.x,(float)target.position.y,(float)target.position.z,
+            (float)agent.facingYaw,(float)std::clamp(target.health/100.0,0.0,1.0),
+            identityMatches?(uint8_t)visibility.tier:(uint8_t)metse::VisibilityTier::Dormant,
+            (uint8_t)target.combatState,(uint8_t)agent.action,
+            (uint8_t)(identityMatches&&visibility.lineOfSight),target.id
+        };
+    }
+    [self.combatantRenderer encodeWithEncoder:encoder
+                                 commandBuffer:commandBuffer
+                                      viewSize:view.drawableSize
+                                    combatants:renderCombatants.data()
+                                         count:combatantCount
+                                       cameraX:(float)state.playerX
+                                       cameraY:(float)(state.playerY+state.cameraHeight)
+                                       cameraZ:(float)state.playerZ
+                                           yaw:(float)state.playerYaw
+                                         pitch:(float)state.playerPitch
+                                          roll:(float)(state.cameraRoll+state.cameraLean)
+                                      adsAlpha:(float)state.adsAlpha
+                             simulationSeconds:(float)state.simulationSeconds];
     [self.viewmodelRenderer encodeWithEncoder:encoder
                                     viewSize:view.drawableSize
                                     adsAlpha:(float)state.adsAlpha
