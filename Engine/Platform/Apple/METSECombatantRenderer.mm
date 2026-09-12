@@ -56,6 +56,7 @@ matrix_float4x4 View(vector_float3 camera, float yaw, float pitch, float roll) {
 void AddVertex(std::vector<CombatantVertex>& vertices, vector_float3 p, vector_float3 n, float part) {
     vertices.push_back({{p.x,p.y,p.z,part},{n.x,n.y,n.z,0}});
 }
+vector_float3 V(float x,float y,float z) { return (vector_float3){x,y,z}; }
 
 void AddBox(std::vector<CombatantVertex>& vertices, std::vector<uint16_t>& indices,
             vector_float3 center, vector_float3 extent, float part) {
@@ -110,16 +111,16 @@ void AddCylinder(std::vector<CombatantVertex>& vertices, std::vector<uint16_t>& 
 }
 
 void BuildCombatantMesh(std::vector<CombatantVertex>& vertices, std::vector<uint16_t>& indices) {
-    AddBox(vertices,indices,{-.15f,.10f,.05f},{.12f,.10f,.22f},5); AddBox(vertices,indices,{.15f,.10f,.05f},{.12f,.10f,.22f},5);
-    AddCylinder(vertices,indices,{-.15f,.18f,0},{-.14f,.83f,0},.115f,0); AddCylinder(vertices,indices,{.15f,.18f,0},{.14f,.83f,0},.115f,0);
-    AddBox(vertices,indices,{0,.88f,0},{.28f,.17f,.17f},0); AddBox(vertices,indices,{0,1.30f,0},{.30f,.39f,.18f},0);
-    AddBox(vertices,indices,{0,1.31f,.15f},{.34f,.30f,.10f},1); AddBox(vertices,indices,{0,1.31f,.265f},{.21f,.17f,.025f},1);
-    AddCylinder(vertices,indices,{-.31f,1.52f,0},{-.34f,1.08f,.16f},.095f,0); AddCylinder(vertices,indices,{.31f,1.52f,0},{.34f,1.08f,.16f},.095f,0);
-    AddEllipsoid(vertices,indices,{-.34f,1.03f,.19f},{.09f,.09f,.09f},2); AddEllipsoid(vertices,indices,{.34f,1.03f,.19f},{.09f,.09f,.09f},2);
-    AddEllipsoid(vertices,indices,{0,1.82f,0},{.145f,.18f,.145f},2); AddEllipsoid(vertices,indices,{0,1.93f,-.005f},{.18f,.115f,.17f},3);
-    AddBox(vertices,indices,{0,1.92f,-.13f},{.20f,.055f,.035f},3);
-    AddBox(vertices,indices,{.11f,1.24f,.42f},{.055f,.065f,.43f},4); AddBox(vertices,indices,{.11f,1.27f,.43f},{.10f,.10f,.15f},4);
-    AddBox(vertices,indices,{.11f,1.34f,.48f},{.055f,.055f,.08f},4); AddCylinder(vertices,indices,{.11f,1.24f,.83f},{.11f,1.24f,1.07f},.032f,4);
+    AddBox(vertices,indices,V(-.15f,.10f,.05f),V(.12f,.10f,.22f),5); AddBox(vertices,indices,V(.15f,.10f,.05f),V(.12f,.10f,.22f),5);
+    AddCylinder(vertices,indices,V(-.15f,.18f,0),V(-.14f,.83f,0),.115f,0); AddCylinder(vertices,indices,V(.15f,.18f,0),V(.14f,.83f,0),.115f,0);
+    AddBox(vertices,indices,V(0,.88f,0),V(.28f,.17f,.17f),0); AddBox(vertices,indices,V(0,1.30f,0),V(.30f,.39f,.18f),0);
+    AddBox(vertices,indices,V(0,1.31f,.15f),V(.34f,.30f,.10f),1); AddBox(vertices,indices,V(0,1.31f,.265f),V(.21f,.17f,.025f),1);
+    AddCylinder(vertices,indices,V(-.31f,1.52f,0),V(-.34f,1.08f,.16f),.095f,0); AddCylinder(vertices,indices,V(.31f,1.52f,0),V(.34f,1.08f,.16f),.095f,0);
+    AddEllipsoid(vertices,indices,V(-.34f,1.03f,.19f),V(.09f,.09f,.09f),2); AddEllipsoid(vertices,indices,V(.34f,1.03f,.19f),V(.09f,.09f,.09f),2);
+    AddEllipsoid(vertices,indices,V(0,1.82f,0),V(.145f,.18f,.145f),2); AddEllipsoid(vertices,indices,V(0,1.93f,-.005f),V(.18f,.115f,.17f),3);
+    AddBox(vertices,indices,V(0,1.92f,-.13f),V(.20f,.055f,.035f),3);
+    AddBox(vertices,indices,V(.11f,1.24f,.42f),V(.055f,.065f,.43f),4); AddBox(vertices,indices,V(.11f,1.27f,.43f),V(.10f,.10f,.15f),4);
+    AddBox(vertices,indices,V(.11f,1.34f,.48f),V(.055f,.055f,.08f),4); AddCylinder(vertices,indices,V(.11f,1.24f,.83f),V(.11f,1.24f,1.07f),.032f,4);
 }
 } // namespace
 
