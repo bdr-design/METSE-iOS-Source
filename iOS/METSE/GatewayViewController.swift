@@ -11,6 +11,9 @@ final class GatewayViewController: UIViewController {
         super.viewDidLoad()
         configureBackground()
         configureLayout()
+        if let crashText = METSECrashReporter.consumeLastCrashIfAny() {
+            present(METSECrashReportViewController(crashText: crashText), animated: true)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
