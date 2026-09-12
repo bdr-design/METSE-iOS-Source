@@ -83,6 +83,8 @@ jobs:
         run: python3 Scripts/guardrails_011e.py
       - name: Build 012-S settings guardrails
         run: python3 Scripts/guardrails_012s.py
+      - name: Build 012-A2 renderer wiring guardrails
+        run: python3 Scripts/guardrails_012a2.py
       - name: C++ mega combat foundation tests
         run: bash Scripts/test_engine_core.sh
       - name: Two simulated hours deterministic host soak

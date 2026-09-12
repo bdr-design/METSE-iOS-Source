@@ -1,6 +1,7 @@
 #import "METSECombatantRenderer.h"
 #import <dispatch/dispatch.h>
 #import <simd/simd.h>
+#import <ModelIO/ModelIO.h>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -122,6 +123,84 @@ void BuildCombatantMesh(std::vector<CombatantVertex>& vertices, std::vector<uint
     AddBox(vertices,indices,V(.11f,1.24f,.42f),V(.055f,.065f,.43f),4); AddBox(vertices,indices,V(.11f,1.27f,.43f),V(.10f,.10f,.15f),4);
     AddBox(vertices,indices,V(.11f,1.34f,.48f),V(.055f,.055f,.08f),4); AddCylinder(vertices,indices,V(.11f,1.24f,.83f),V(.11f,1.24f,1.07f),.032f,4);
 }
+
+// Build 012-A: replaces the procedural placeholder above with the healed/rigged body
+// asset when it loads successfully. Per project requirement, ANY failure at ANY step
+// here must fall through to the caller still holding the procedural mesh untouched -
+// this function only ever REPLACES vertices/indices on full, verified success.
+bool LoadCombatantBodyAsset(std::vector<CombatantVertex>& vertices, std::vector<uint16_t>& indices) {
+    MDLVertexDescriptor *vertexDescriptor = [MDLVertexDescriptor new];
+    vertexDescriptor.attributes[0] = [[MDLVertexAttribute alloc]
+        initWithName:MDLVertexAttributePosition format:MDLVertexFormatFloat3 offset:0 bufferIndex:0];
+    vertexDescriptor.attributes[1] = [[MDLVertexAttribute alloc]
+        initWithName:MDLVertexAttributeNormal format:MDLVertexFormatFloat3 offset:12 bufferIndex:0];
+    vertexDescriptor.layouts[0] = [[MDLVertexBufferLayout alloc] initWithStride:24];
+
+    NSBundle *bundle = NSBundle.mainBundle;
+    NSURL *assetURL = [bundle URLForResource:@"soldier_body_v1" withExtension:@"usdz"
+                                subdirectory:@"Assets/Characters/Soldier"];
+    if (!assetURL) {
+        for (NSURL *candidate in [bundle URLsForResourcesWithExtension:@"usdz" subdirectory:nil]) {
+            if ([candidate.lastPathComponent isEqualToString:@"soldier_body_v1.usdz"]) { assetURL = candidate; break; }
+        }
+    }
+    if (!assetURL) return false;
+
+    MDLAsset *asset = [[MDLAsset alloc] initWithURL:assetURL vertexDescriptor:vertexDescriptor bufferAllocator:nil];
+    if (asset.count == 0) return false;
+
+    NSMutableArray<MDLMesh *> *meshes = [NSMutableArray array];
+    __block void (^collect)(MDLObject *);
+    collect = ^(MDLObject *object) {
+        if (!object) return;
+        if ([object isKindOfClass:[MDLMesh class]]) [meshes addObject:(MDLMesh *)object];
+        for (NSUInteger i = 0; i < object.children.count; ++i) collect([object.children objectAtIndexedSubscript:i]);
+    };
+    for (NSUInteger i = 0; i < asset.count; ++i) collect([asset objectAtIndex:i]);
+    if (meshes.count == 0) return false;
+
+    MDLMesh *mesh = meshes.firstObject;
+    if (mesh.vertexCount == 0 || mesh.vertexBuffers.count == 0) return false;
+    id<MDLMeshBuffer> vertexBuffer = mesh.vertexBuffers.firstObject;
+    MDLMeshBufferMap *vertexMap = [vertexBuffer map];
+    if (!vertexMap || !vertexMap.bytes) return false;
+    const uint8_t *rawVertices = (const uint8_t *)vertexMap.bytes;
+
+    std::vector<CombatantVertex> loadedVertices;
+    loadedVertices.reserve(mesh.vertexCount);
+    for (NSUInteger i = 0; i < mesh.vertexCount; ++i) {
+        const float *p = (const float *)(rawVertices + i * 24);
+        // part = 0 uniformly: the healed asset has no per-region material split yet
+        // (documented in Docs/BUILD012_A_SOLDIER_BODY_PROVENANCE_AR.md).
+        loadedVertices.push_back({{p[0], p[1], p[2], 0.0f}, {p[3], p[4], p[5], 0.0f}});
+    }
+
+    std::vector<uint16_t> loadedIndices;
+    for (MDLSubmesh *submesh in mesh.submeshes) {
+        id<MDLMeshBuffer> indexBuffer = submesh.indexBuffer;
+        if (!indexBuffer) return false;
+        MDLMeshBufferMap *indexMap = [indexBuffer map];
+        if (!indexMap || !indexMap.bytes) return false;
+        const NSUInteger indexCount = submesh.indexCount;
+        if (submesh.indexType == MDLIndexBitDepthUInt16) {
+            const uint16_t *idx = (const uint16_t *)indexMap.bytes;
+            loadedIndices.insert(loadedIndices.end(), idx, idx + indexCount);
+        } else if (submesh.indexType == MDLIndexBitDepthUInt32) {
+            const uint32_t *idx = (const uint32_t *)indexMap.bytes;
+            for (NSUInteger i = 0; i < indexCount; ++i) {
+                if (idx[i] > UINT16_MAX) return false;
+                loadedIndices.push_back((uint16_t)idx[i]);
+            }
+        } else {
+            return false;
+        }
+    }
+    if (loadedVertices.empty() || loadedIndices.empty()) return false;
+
+    vertices = std::move(loadedVertices);
+    indices = std::move(loadedIndices);
+    return true;
+}
 } // namespace
 
 @interface METSECombatantRenderer ()
@@ -143,6 +222,7 @@ void BuildCombatantMesh(std::vector<CombatantVertex>& vertices, std::vector<uint
     self=[super init]; if(!self) return nil;
     _status=@"combatant geometry unavailable"; _frameSemaphore=dispatch_semaphore_create(kFramesInFlight);
     std::vector<CombatantVertex> vertices; std::vector<uint16_t> indices; BuildCombatantMesh(vertices,indices);
+    const bool usedBodyAsset = LoadCombatantBodyAsset(vertices,indices);
     _vertexBuffer=[device newBufferWithBytes:vertices.data() length:vertices.size()*sizeof(CombatantVertex) options:MTLResourceStorageModeShared];
     _indexBuffer=[device newBufferWithBytes:indices.data() length:indices.size()*sizeof(uint16_t) options:MTLResourceStorageModeShared];
     _indexCount=indices.size();
@@ -160,7 +240,7 @@ void BuildCombatantMesh(std::vector<CombatantVertex>& vertices, std::vector<uint
     if(!_pipeline||!_vertexBuffer||!_indexBuffer||_instanceBuffers.count!=kFramesInFlight){ _status=[NSString stringWithFormat:@"combatant pipeline failed: %@",error.localizedDescription]; return self; }
     MTLDepthStencilDescriptor *depth=[MTLDepthStencilDescriptor new]; depth.depthCompareFunction=MTLCompareFunctionLess; depth.depthWriteEnabled=YES;
     _depthState=[device newDepthStencilStateWithDescriptor:depth]; _ready=_depthState!=nil;
-    _status=_ready?[NSString stringWithFormat:@"native combatant proxy ready (%lu triangles)",(unsigned long)(_indexCount/3)]:@"combatant depth state failed";
+    _status=_ready?[NSString stringWithFormat:@"%@ combatant proxy ready (%lu triangles)",usedBodyAsset?@"healed-asset":@"native procedural",(unsigned long)(_indexCount/3)]:@"combatant depth state failed";
     return self;
 }
 

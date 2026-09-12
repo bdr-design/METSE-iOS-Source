@@ -27,7 +27,7 @@
       "thirdPartyContent": true,
       "qualityTier": "engineeringReference",
       "replacementContract": "Preserve the 17-joint skeleton naming/hierarchy (Hips root; Spine/Chest/Neck/Head chain; Shoulder/Elbow/Wrist and Hip/Knee/Ankle chains per side) and meter-scale rest pose when replacing with a licensed or artist-authored production mesh, so the future animation system in Build 012-B does not need to be rebuilt.",
-      "fallbackRule": "The existing procedural geometric humanoid in METSECombatantRenderer.mm MUST remain as the load-failure fallback, per project requirements. This asset has not yet been wired into the renderer."
+      "fallbackRule": "The existing procedural geometric humanoid in METSECombatantRenderer.mm is used automatically whenever the USD load fails at any step (missing file, empty mesh, unsupported index type, etc.) - see LoadCombatantBodyAsset(). Not yet tested on a real Apple compiler/device."
     }
   ]
 }
