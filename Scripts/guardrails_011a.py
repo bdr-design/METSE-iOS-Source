@@ -56,6 +56,8 @@ for token in ("metseMeshVertex", "metseMeshFragment", "MeshVertex", "baseColorMe
 require("sdBox(wp" not in shader and "float2 wc=" not in shader,
         "legacy screen-space box weapon returned")
 require("sdk: ModelIO.framework" in project, "iOS target must link ModelIO")
+require("- path: Content\n        buildPhase: resources" in project,
+        "Content directory must enter the Xcode resources build phase")
 require("python3 Scripts/guardrails_011a.py" in workflow, "011-A guardrail missing from CI")
 require("viewmodel.obj" in build and "asset_manifest.json" in build,
         "IPA build does not verify bundled native assets")
