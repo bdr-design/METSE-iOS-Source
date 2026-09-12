@@ -37,3 +37,4 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
     dependencies:
       - sdk: AVFoundation.framework
+      - sdk: ModelIO.framework
