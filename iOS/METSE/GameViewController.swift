@@ -1,5 +1,6 @@
 import UIKit
 import MetalKit
+import CoreMotion
 
 final class GameViewController: UIViewController {
     private var engine: METSEEngineBridge?
@@ -19,6 +20,9 @@ final class GameViewController: UIViewController {
     private var joystickHomeCenter = CGPoint.zero
     private var joystickActive = false
     private let joystickRadius: CGFloat = 52
+    private var isLeftHandedLayout = false
+    private var isAiming = false
+    private let motionManager = CMMotionManager()
 
     override var prefersStatusBarHidden: Bool { true }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
@@ -27,8 +31,13 @@ final class GameViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let safe = view.safeAreaInsets
-        joystickHomeCenter = CGPoint(x: safe.left + joystickRadius + 18,
-                                     y: view.bounds.height - safe.bottom - joystickRadius - 16)
+        if isLeftHandedLayout {
+            joystickHomeCenter = CGPoint(x: view.bounds.width - safe.right - joystickRadius - 18,
+                                         y: view.bounds.height - safe.bottom - joystickRadius - 16)
+        } else {
+            joystickHomeCenter = CGPoint(x: safe.left + joystickRadius + 18,
+                                         y: view.bounds.height - safe.bottom - joystickRadius - 16)
+        }
         guard !joystickActive else { return }
         joystickBase.center = joystickHomeCenter
         joystickKnob.center = joystickHomeCenter
@@ -36,6 +45,7 @@ final class GameViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        isLeftHandedLayout = METSESettings.leftHandedLayout
         view.backgroundColor = .black
         guard let device = MTLCreateSystemDefaultDevice() else { showUnsupportedMetal(); return }
         let metalView = MTKView(frame: .zero, device: device)
@@ -51,6 +61,7 @@ final class GameViewController: UIViewController {
         bridge.start()
         configureInput()
         configureHUD()
+        startGyroscopeIfAvailable()
         refreshStatus()
         diagnosticTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard UIApplication.shared.applicationState == .active, let engine = self?.engine else { return }
@@ -71,7 +82,7 @@ final class GameViewController: UIViewController {
             engine?.stop()
         }
     }
-    deinit { statusTimer?.invalidate(); diagnosticTimer?.invalidate() }
+    deinit { statusTimer?.invalidate(); diagnosticTimer?.invalidate(); motionManager.stopDeviceMotionUpdates() }
 
     private func configureInput() {
         [leftPad, rightPad].forEach { $0.backgroundColor = .clear; $0.translatesAutoresizingMaskIntoConstraints = false; view.addSubview($0) }
@@ -80,8 +91,12 @@ final class GameViewController: UIViewController {
             rightPad.trailingAnchor.constraint(equalTo: view.trailingAnchor), rightPad.topAnchor.constraint(equalTo: view.topAnchor), rightPad.bottomAnchor.constraint(equalTo: view.bottomAnchor), rightPad.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.50)
         ])
         configureJoystickVisuals()
-        leftPad.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(movePan(_:))))
-        rightPad.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(lookPan(_:))))
+        // Handedness swaps WHICH physical pad drives movement vs. look; the gesture
+        // handlers below key off gesture.view so this needs no further branching.
+        let movementPad = isLeftHandedLayout ? rightPad : leftPad
+        let lookPad = isLeftHandedLayout ? leftPad : rightPad
+        movementPad.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(movePan(_:))))
+        lookPad.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(lookPan(_:))))
     }
 
     private func configureJoystickVisuals() {
@@ -100,10 +115,10 @@ final class GameViewController: UIViewController {
         statusLabel.font = .monospacedSystemFont(ofSize: 13, weight: .bold); statusLabel.textColor = .white; statusLabel.backgroundColor = UIColor.black.withAlphaComponent(0.56); statusLabel.textAlignment = .center; statusLabel.layer.cornerRadius = 12; statusLabel.layer.masksToBounds = true; statusLabel.adjustsFontSizeToFitWidth = true; statusLabel.minimumScaleFactor = 0.78; statusLabel.accessibilityLabel = "حالة القتال"
         let fireButton = makeRoundButton(symbol: "scope", size: 70, background: UIColor(red: 0.72, green: 0.18, blue: 0.10, alpha: 0.82)); fireButton.accessibilityLabel = "إطلاق"; fireButton.addAction(UIAction { [weak self] _ in self?.engine?.triggerFire() }, for: .touchDown)
         configureHoldButton(sprintButton, symbol: "figure.run", label: "ركض سريع") { [weak self] held in self?.engine?.setSprintHeld(held) }
-        configureHoldButton(aimButton, symbol: "viewfinder", label: "تصويب") { [weak self] held in self?.engine?.setAimHeld(held) }
+        configureHoldButton(aimButton, symbol: "viewfinder", label: "تصويب") { [weak self] held in self?.isAiming = held; self?.engine?.setAimHeld(held) }
         stanceButton.setImage(UIImage(systemName: "figure.stand"), for: .normal); styleAuxiliaryButton(stanceButton); stanceButton.accessibilityLabel = "تغيير الوضعية"; stanceButton.addAction(UIAction { [weak self] _ in self?.engine?.cycleStance(); self?.refreshStatus() }, for: .touchUpInside)
         reloadButton.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal); styleAuxiliaryButton(reloadButton); reloadButton.accessibilityLabel = "تلقيم"; reloadButton.addAction(UIAction { [weak self] _ in self?.engine?.reloadWeapon() }, for: .touchUpInside)
-        [backButton, observatoryButton, statusLabel, fireButton, sprintButton, aimButton, stanceButton, reloadButton].forEach { view.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        [backButton, observatoryButton, statusLabel, fireButton, sprintButton, aimButton, stanceButton, reloadButton].forEach { view.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false; $0.alpha = CGFloat(METSESettings.hudOpacity) }
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12), backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8), backButton.widthAnchor.constraint(equalToConstant: 44), backButton.heightAnchor.constraint(equalToConstant: 44),
             observatoryButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 8), observatoryButton.centerYAnchor.constraint(equalTo: backButton.centerYAnchor), observatoryButton.widthAnchor.constraint(equalToConstant: 44), observatoryButton.heightAnchor.constraint(equalToConstant: 44),
@@ -126,7 +141,8 @@ final class GameViewController: UIViewController {
     private func makeRoundButton(symbol: String, size: CGFloat, background: UIColor) -> UIButton { let b = UIButton(type: .system); b.setImage(UIImage(systemName: symbol), for: .normal); b.tintColor = .white; b.backgroundColor = background; b.layer.cornerRadius = size / 2; b.layer.borderWidth = 1; b.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor; return b }
 
     @objc private func movePan(_ gesture: UIPanGestureRecognizer) {
-        let local = gesture.location(in: leftPad); let inView = leftPad.convert(local, to: view)
+        guard let pad = gesture.view else { return }
+        let local = gesture.location(in: pad); let inView = pad.convert(local, to: view)
         if gesture.state == .began { joystickActive = true; leftStart = local; joystickBase.center = inView; joystickKnob.center = inView; joystickBase.alpha = 0.58 }
         if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed { joystickActive = false; engine?.setMoveForward(0, strafe: 0); resetJoystick(animated: true); return }
         let dx = local.x - leftStart.x, dy = local.y - leftStart.y, length = max(0.0001, sqrt(dx * dx + dy * dy)), scale = min(1.0, joystickRadius / length), cx = dx * scale, cy = dy * scale
@@ -134,12 +150,33 @@ final class GameViewController: UIViewController {
         engine?.setMoveForward(Float(-cy / joystickRadius), strafe: Float(cx / joystickRadius))
     }
     @objc private func lookPan(_ gesture: UIPanGestureRecognizer) {
-        let point = gesture.location(in: rightPad)
+        guard let pad = gesture.view else { return }
+        let point = gesture.location(in: pad)
         if gesture.state == .began { rightLast = point; return }
         if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed { rightLast = point; return }
-        let dx = Float(point.x - rightLast.x) * 0.0040, dy = Float(point.y - rightLast.y) * 0.00335; rightLast = point; engine?.addLookYaw(dx, pitch: -dy)
+        let sensitivity = Float(isAiming ? METSESettings.adsSensitivity : METSESettings.lookSensitivity)
+        let dx = Float(point.x - rightLast.x) * 0.0040 * sensitivity, dy = Float(point.y - rightLast.y) * 0.00335 * sensitivity; rightLast = point; engine?.addLookYaw(dx, pitch: -dy)
     }
     private func resetJoystick(animated: Bool) { let changes = { self.joystickBase.center = self.joystickHomeCenter; self.joystickKnob.center = self.joystickHomeCenter; self.joystickBase.alpha = 0.24 }; animated ? UIView.animate(withDuration: 0.16, animations: changes) : changes() }
+
+    /// Gyroscope contributes ONLY while aiming down sights, matching the genre-standard
+    /// "Scope On" gyroscope mode (as opposed to always-on, which fights the touch-pan
+    /// look and is not what most tactical shooters default to). This is purely additive
+    /// on top of touch-pan look, never a replacement for it, and does nothing at all
+    /// unless the player has explicitly enabled it in Settings.
+    private func startGyroscopeIfAvailable() {
+        guard motionManager.isDeviceMotionAvailable else { return }
+        motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
+        motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, error in
+            guard let self, let motion, error == nil else { return }
+            guard self.isAiming, METSESettings.gyroscopeEnabled else { return }
+            let sensitivity = Float(METSESettings.gyroscopeSensitivity)
+            let yaw = Float(motion.rotationRate.z) * -0.012 * sensitivity
+            let pitch = Float(motion.rotationRate.x) * 0.012 * sensitivity
+            self.engine?.addLookYaw(yaw, pitch: pitch)
+        }
+    }
+
     private func startStatusTimer() { statusTimer?.invalidate(); statusTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: true) { [weak self] _ in self?.refreshStatus() }; if let statusTimer { RunLoop.main.add(statusTimer, forMode: .common) } }
     private func refreshStatus() {
         guard let snapshot = engine?.combatHUDSnapshot() else { statusLabel.text = "المحرك غير متاح"; return }
