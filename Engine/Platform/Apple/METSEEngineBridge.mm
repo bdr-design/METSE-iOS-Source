@@ -1,5 +1,6 @@
 #import "METSEEngineBridge.h"
 #import "METSEAudioPresenter.h"
+#import "METSEBattlefieldRenderer.h"
 #import "METSEViewmodelRenderer.h"
 #import <QuartzCore/QuartzCore.h>
 #import <os/lock.h>
@@ -59,6 +60,8 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
 @property(nonatomic, weak) MTKView *metalView;
 @property(nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property(nonatomic, strong) id<MTLRenderPipelineState> pipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> overlayPipeline;
+@property(nonatomic, strong) METSEBattlefieldRenderer *battlefieldRenderer;
 @property(nonatomic, strong) METSEViewmodelRenderer *viewmodelRenderer;
 @end
 
@@ -142,13 +145,35 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
         NSLog(@"METSE Metal pipeline failed: %@", error);
         return nil;
     }
+    MTLRenderPipelineDescriptor *overlayDescriptor = [MTLRenderPipelineDescriptor new];
+    overlayDescriptor.label = @"METSE reticle and muzzle overlay";
+    overlayDescriptor.vertexFunction = vertex;
+    overlayDescriptor.fragmentFunction = [library newFunctionWithName:@"metseReticleFragment"];
+    overlayDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat;
+    overlayDescriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat;
+    overlayDescriptor.colorAttachments[0].blendingEnabled = YES;
+    overlayDescriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+    overlayDescriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    overlayDescriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+    overlayDescriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    _overlayPipeline = [device newRenderPipelineStateWithDescriptor:overlayDescriptor error:&error];
+    if (!_overlayPipeline) {
+        NSLog(@"METSE overlay pipeline failed: %@", error);
+        return nil;
+    }
     _viewmodelRenderer = [[METSEViewmodelRenderer alloc]
         initWithDevice:device
         library:library
         colorPixelFormat:view.colorPixelFormat
         depthPixelFormat:view.depthStencilPixelFormat
         bundle:NSBundle.mainBundle];
+    _battlefieldRenderer = [[METSEBattlefieldRenderer alloc]
+        initWithDevice:device
+        library:library
+        colorPixelFormat:view.colorPixelFormat
+        depthPixelFormat:view.depthStencilPixelFormat];
     NSLog(@"METSE viewmodel: %@", _viewmodelRenderer.assetStatus);
+    NSLog(@"METSE battlefield: %@", _battlefieldRenderer.status);
     _audioPresenter=[METSEAudioPresenter new];
     view.delegate = self;
     return self;
@@ -623,6 +648,30 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     [encoder setRenderPipelineState:self.pipeline];
     [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    std::array<METSEBattlefieldObstacle, kRenderObstacleCap> battlefieldObstacles{};
+    for (NSUInteger index = 0; index < obstacleCount && index < kRenderObstacleCap; ++index) {
+        const auto &source = obstacles[index];
+        battlefieldObstacles[index] = {
+            (float)source.minX, (float)source.minY, (float)source.minZ,
+            (float)source.maxX, (float)source.maxY, (float)source.maxZ,
+            (uint8_t)source.material
+        };
+    }
+    [self.battlefieldRenderer encodeWithEncoder:encoder
+                                  commandBuffer:commandBuffer
+                                       viewSize:view.drawableSize
+                                      obstacles:battlefieldObstacles.data()
+                                          count:std::min<NSUInteger>(obstacleCount, kRenderObstacleCap)
+                                           minX:(float)minX maxX:(float)maxX
+                                           minZ:(float)minZ maxZ:(float)maxZ
+                                        cameraX:(float)state.playerX
+                                        cameraY:(float)(state.playerY + state.cameraHeight)
+                                        cameraZ:(float)state.playerZ
+                                            yaw:(float)state.playerYaw
+                                          pitch:(float)state.playerPitch
+                                           roll:(float)(state.cameraRoll + state.cameraLean)
+                                       adsAlpha:(float)state.adsAlpha
+                              simulationSeconds:(float)state.simulationSeconds];
     [self.viewmodelRenderer encodeWithEncoder:encoder
                                     viewSize:view.drawableSize
                                     adsAlpha:(float)state.adsAlpha
@@ -634,6 +683,10 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
                                   obstructed:state.weaponObstructed
                               reloadRemaining:(float)state.reloadRemaining
                              simulationSeconds:(float)state.simulationSeconds];
+    [encoder setRenderPipelineState:self.overlayPipeline];
+    [encoder setDepthStencilState:nil];
+    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     [commandBuffer presentDrawable:drawable];
     [commandBuffer commit];
