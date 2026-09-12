@@ -1,5 +1,6 @@
 #import "METSEEngineBridge.h"
 #import "METSEAudioPresenter.h"
+#import "METSEViewmodelRenderer.h"
 #import <QuartzCore/QuartzCore.h>
 #import <os/lock.h>
 #import <simd/simd.h>
@@ -58,6 +59,7 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
 @property(nonatomic, weak) MTKView *metalView;
 @property(nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property(nonatomic, strong) id<MTLRenderPipelineState> pipeline;
+@property(nonatomic, strong) METSEViewmodelRenderer *viewmodelRenderer;
 @end
 
 @implementation METSEEngineBridge {
@@ -118,6 +120,7 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
     if (!device) return nil;
     view.device = device;
     view.colorPixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
+    view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
     view.preferredFramesPerSecond = 60;
     view.enableSetNeedsDisplay = NO;
     view.paused = NO;
@@ -132,12 +135,20 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
     descriptor.vertexFunction = vertex;
     descriptor.fragmentFunction = fragment;
     descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat;
+    descriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat;
     NSError *error = nil;
     _pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
     if (!_pipeline) {
         NSLog(@"METSE Metal pipeline failed: %@", error);
         return nil;
     }
+    _viewmodelRenderer = [[METSEViewmodelRenderer alloc]
+        initWithDevice:device
+        library:library
+        colorPixelFormat:view.colorPixelFormat
+        depthPixelFormat:view.depthStencilPixelFormat
+        bundle:NSBundle.mainBundle];
+    NSLog(@"METSE viewmodel: %@", _viewmodelRenderer.assetStatus);
     _audioPresenter=[METSEAudioPresenter new];
     view.delegate = self;
     return self;
@@ -555,6 +566,9 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
         os_unfair_lock_unlock(&_telemetryLock);
         return;
     }
+    pass.depthAttachment.clearDepth = 1.0;
+    pass.depthAttachment.loadAction = MTLLoadActionClear;
+    pass.depthAttachment.storeAction = MTLStoreActionDontCare;
     METSEFrameUniforms uniforms{};
     float muzzleFlash=0.0f;
     NSUInteger effectWrite=0;
@@ -609,6 +623,17 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     [encoder setRenderPipelineState:self.pipeline];
     [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [self.viewmodelRenderer encodeWithEncoder:encoder
+                                    viewSize:view.drawableSize
+                                    adsAlpha:(float)state.adsAlpha
+                                       swayX:(float)state.weaponSwayX
+                                       swayY:(float)state.weaponSwayY
+                                 recoilPitch:(float)state.recoilPitch
+                                   recoilYaw:(float)state.recoilYaw
+                                  cameraRoll:(float)(state.cameraRoll + state.cameraLean)
+                                  obstructed:state.weaponObstructed
+                              reloadRemaining:(float)state.reloadRemaining
+                             simulationSeconds:(float)state.simulationSeconds];
     [encoder endEncoding];
     [commandBuffer presentDrawable:drawable];
     [commandBuffer commit];
