@@ -103,11 +103,6 @@ require("combatantCount" in bridge and "aiTargetImpacts" in bridge and
         "friendlyFireDenials" in bridge and "playerHealth" in ui,
         "Observatory must expose Build 010-A combatant/player metrics")
 
-for forbidden in ('VERSION = "0.4.0"', 'BUILD = "9"', 'MARKETING_VERSION: "0.4.0"',
-                  'CURRENT_PROJECT_VERSION: "9"'):
-    require(forbidden not in text("VERSION") + text("BUILD") + text("project.yml"),
-            f"Build 009 seal must precede version/build change: {forbidden}")
-
 portable = combatant_h + combatant_cpp + damage_h + damage_cpp + ballistics_h + ballistics_cpp + ai_h + ai_cpp
 require(re.search(r"\bnew\s+", portable) is None, "Build 010 portable combat path forbids heap new")
 

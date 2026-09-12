@@ -27,9 +27,10 @@ require(material_path.is_file(), "native viewmodel materials missing")
 if manifest_path.is_file():
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assets = manifest.get("assets", [])
-    require(len(assets) == 1, "011-A must declare its exact viewmodel asset")
-    if assets:
-        asset = assets[0]
+    viewmodel_assets = [a for a in assets if a.get("id") == "metse.m4a1.viewmodel.engineering.v1"]
+    require(len(viewmodel_assets) == 1, "011-A must declare exactly one M4A1 viewmodel manifest entry")
+    if viewmodel_assets:
+        asset = viewmodel_assets[0]
         require(asset.get("thirdPartyContent") is False, "viewmodel ownership must be explicit")
         require(asset.get("qualityTier") == "engineeringReference", "quality claim must remain honest")
         require(asset.get("generator") == "Tools/generate_viewmodel_asset.py", "reproducible generator missing")

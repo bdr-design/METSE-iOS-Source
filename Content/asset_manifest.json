@@ -12,6 +12,22 @@
       "thirdPartyContent": false,
       "qualityTier": "engineeringReference",
       "replacementContract": "Preserve meter scale, -Z muzzle axis, material groups, and first-person origin when replacing with a production mesh."
+    },
+    {
+      "id": "metse.combatant.body.healed_rigged.v1",
+      "kind": "combatantBody",
+      "mesh": "Assets/Characters/Soldier/soldier_body_v1.usdz",
+      "format": "usdz",
+      "skeletonJointCount": 17,
+      "vertexCount": 6124,
+      "triangleCount": 18000,
+      "provenance": "Docs/BUILD012_A_SOLDIER_BODY_PROVENANCE_AR.md",
+      "ownership": "thirdPartyGeneratedBaseGeometry_pendingLicenseReview",
+      "license": "PENDING - source AI generation tool's commercial-use terms have NOT been verified. Do not ship publicly until reviewed.",
+      "thirdPartyContent": true,
+      "qualityTier": "engineeringReference",
+      "replacementContract": "Preserve the 17-joint skeleton naming/hierarchy (Hips root; Spine/Chest/Neck/Head chain; Shoulder/Elbow/Wrist and Hip/Knee/Ankle chains per side) and meter-scale rest pose when replacing with a licensed or artist-authored production mesh, so the future animation system in Build 012-B does not need to be rebuilt.",
+      "fallbackRule": "The existing procedural geometric humanoid in METSECombatantRenderer.mm MUST remain as the load-failure fallback, per project requirements. This asset has not yet been wired into the renderer."
     }
   ]
 }
