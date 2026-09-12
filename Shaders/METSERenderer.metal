@@ -43,6 +43,27 @@ struct BattlefieldOut {
     float4 tintAndRoughness;
     float2 materialAndKind;
 };
+struct CombatantVertex {
+    float4 positionAndPart [[attribute(0)]];
+    float3 normal [[attribute(1)]];
+};
+struct CombatantInstance {
+    float4 positionAndFacing;
+    float4 healthTierStateLOS;
+    float4 actionIdentityPhase;
+};
+struct CombatantScene {
+    float4x4 viewProjection;
+    float4 cameraAndTime;
+    float4 sunAndFog;
+};
+struct CombatantOut {
+    float4 position [[position]];
+    float3 worldPosition;
+    float3 normal;
+    float4 state;
+    float2 partAndIdentity;
+};
 
 vertex VSOut metseVertex(uint id [[vertex_id]]) {
     float2 positions[3] = {float2(-1, -1), float2(3, -1), float2(-1, 3)};
@@ -72,6 +93,41 @@ vertex BattlefieldOut metseBattlefieldVertex(
     output.normal = input.normal;
     output.tintAndRoughness = instance.tintAndRoughness;
     output.materialAndKind = float2(instance.centerAndMaterial.w, instance.halfExtentsAndKind.w);
+    return output;
+}
+
+vertex CombatantOut metseCombatantVertex(
+    CombatantVertex input [[stage_in]],
+    constant CombatantScene &scene [[buffer(1)]],
+    device const CombatantInstance *instances [[buffer(2)]],
+    uint instanceID [[instance_id]]) {
+    CombatantInstance instance=instances[instanceID];
+    float3 local=input.positionAndPart.xyz;
+    float combatState=instance.healthTierStateLOS.z;
+    if(combatState>=2.0){
+        float angle=combatState>2.5?1.48:0.82;
+        float c=cos(angle), s=sin(angle);
+        local.xy=float2(local.x*c-local.y*s,local.x*s+local.y*c);
+        local.y+=combatState>2.5?0.30:0.16;
+    } else {
+        float action=instance.actionIdentityPhase.x;
+        float moving=max(max(1.0-step(.4,abs(action-1.0)),1.0-step(.4,abs(action-5.0))),
+                         max(1.0-step(.4,abs(action-6.0)),1.0-step(.4,abs(action-7.0))));
+        local.y+=sin(scene.cameraAndTime.w*8.0+instance.actionIdentityPhase.z)*0.018*moving;
+    }
+    float yaw=instance.positionAndFacing.w, cy=cos(yaw), sy=sin(yaw);
+    float3 rotated=float3(local.x*cy+local.z*sy,local.y,-local.x*sy+local.z*cy);
+    float3 world=instance.positionAndFacing.xyz+rotated;
+    float3 normal=input.normal;
+    if(combatState>=2.0){
+        float angle=combatState>2.5?1.48:0.82, c=cos(angle), s=sin(angle);
+        normal.xy=float2(normal.x*c-normal.y*s,normal.x*s+normal.y*c);
+    }
+    normal=float3(normal.x*cy+normal.z*sy,normal.y,-normal.x*sy+normal.z*cy);
+    CombatantOut output;
+    output.position=scene.viewProjection*float4(world,1.0); output.worldPosition=world;
+    output.normal=normalize(normal); output.state=instance.healthTierStateLOS;
+    output.partAndIdentity=float2(input.positionAndPart.w,instance.actionIdentityPhase.y);
     return output;
 }
 
@@ -203,6 +259,28 @@ fragment float4 metseBattlefieldFragment(
     return float4(pow(max(lit, 0.0), float3(0.92)), 1.0);
 }
 
+fragment float4 metseCombatantFragment(CombatantOut input [[stage_in]],
+                                       constant CombatantScene &scene [[buffer(1)]]) {
+    float part=round(input.partAndIdentity.x);
+    float3 palette[6]={float3(.19,.22,.15),float3(.24,.27,.18),float3(.43,.31,.23),
+                       float3(.12,.14,.10),float3(.055,.060,.057),float3(.075,.070,.060)};
+    float3 base=palette[(uint)clamp(part,0.0,5.0)];
+    float grime=noise21(input.worldPosition.xz*5.1+input.worldPosition.yy)*.10-.045;
+    base+=grime;
+    float3 n=normalize(input.normal), light=normalize(scene.sunAndFog.xyz);
+    float diffuse=max(dot(n,light),0.0), ambient=.19+max(n.y,0.0)*.17;
+    float3 view=normalize(scene.cameraAndTime.xyz-input.worldPosition);
+    float rim=pow(1.0-max(dot(n,view),0.0),3.0);
+    float health=clamp(input.state.x,0.0,1.0), lineOfSight=input.state.w;
+    float3 lit=base*(ambient+diffuse*.88)+rim*float3(.07,.08,.06);
+    lit=mix(lit,lit*float3(.62,.55,.52),1.0-health);
+    lit*=mix(.72,1.0,lineOfSight);
+    float distance=length(scene.cameraAndTime.xyz-input.worldPosition);
+    float fog=clamp(1.0-exp(-distance*scene.sunAndFog.w),0.0,.82);
+    lit=mix(lit,float3(.54,.56,.52),fog); lit=lit/(lit+.82);
+    return float4(pow(max(lit,0.0),float3(.92)),1.0);
+}
+
 fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &uniforms [[buffer(0)]]) {
     float2 resolution = max(uniforms.timing.yz, float2(1));
     float2 screen = (input.position.xy / resolution) * 2.0 - 1.0; screen.y = -screen.y;
@@ -223,28 +301,9 @@ fragment float4 metseFragment(VSOut input [[stage_in]], constant Uniforms &unifo
     // World surfaces are rendered by metseBattlefieldVertex/metseBattlefieldFragment
     // from the same authoritative obstacle snapshot. This pass owns sky and overlays.
 
-    uint targetCount = min((uint)round(uniforms.worldExtra.y), kMaxTargets);
-    for (uint i = 0; i < targetCount; ++i) {
-        float4 target = uniforms.targetData[i], metadata = uniforms.targetMeta[i];
-        float4 tm=metadata; float tier=tm.x;
-        if (target.w < 0.5 || metadata.y < 0.5 || tier >= 2.5) continue;
-        float3 center = projectWorld(float3(target.x, 1.015, target.y), camera, forward, right, up, tanHalfVFov, aspect);
-        if (center.z <= 1 || abs(center.x) > 2 || abs(center.y) > 2) continue;
-        float3 targetColor = mix(float3(0.38, 0.055, 0.035), float3(0.50, 0.22, 0.08), clamp(target.z / 100.0, 0.0, 1.0));
-        if (tier >= 1.5) {
-            float radius = max(0.005, 0.13 / (center.z * tanHalfVFov * aspect));
-            color = mix(color, targetColor, (1.0 - smoothstep(radius * 0.65, radius, length(screen - center.xy))) * 0.42); continue;
-        }
-        float3 feet = projectWorld(float3(target.x, 0.15, target.y), camera, forward, right, up, tanHalfVFov, aspect);
-        float3 head = projectWorld(float3(target.x, 1.88, target.y), camera, forward, right, up, tanHalfVFov, aspect);
-        float height = max(0.012, abs(head.y - feet.y));
-        float halfWidth = max(0.008, 0.36 / (center.z * tanHalfVFov * aspect));
-        float body = 1.0 - smoothstep(0.0, 0.008, sdBox(screen - float2(center.x, (feet.y + head.y) * 0.5), float2(halfWidth, height * 0.34)));
-        float headRadius = max(halfWidth * 0.72, height * 0.085);
-        float headMask = tier < 0.5 ? 1.0 - smoothstep(headRadius * 0.86, headRadius,
-            length(screen - float2(center.x, head.y - headRadius * 0.75))) : 0.0;
-        color = mix(color, targetColor, clamp(body + headMask, 0.0, 1.0) * (tier < 0.5 ? 0.84 : 0.62));
-    }
+    // Historical target visibility ABI remains populated for diagnostics. Native,
+    // depth-tested geometry consumes the same snapshot in METSECombatantRenderer.
+    float4 tm=uniforms.targetMeta[0]; float tier=tm.x; color+=float3(tier*0.0);
 
     uint projectileCount = min((uint)round(uniforms.worldExtra.z), kMaxProjectiles);
     for (uint i = 0; i < projectileCount; ++i) {
