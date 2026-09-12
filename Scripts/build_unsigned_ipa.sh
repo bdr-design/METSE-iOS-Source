@@ -9,11 +9,13 @@ xcodebuild -project METSE.xcodeproj -scheme METSE -configuration Release -sdk ip
 APP="$(find "$OUT/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name 'METSE.app' -print -quit)"
 [[ -n "$APP" ]] || { echo "METSE.app not produced" >&2; exit 30; }
 PLIST="$APP/Info.plist"
-python3 - "$PLIST" "$SOURCE_REVISION" <<'PY'
+EXPECTED_VERSION="$(cat VERSION)"
+EXPECTED_BUILD="$(cat BUILD)"
+python3 - "$PLIST" "$SOURCE_REVISION" "$EXPECTED_VERSION" "$EXPECTED_BUILD" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as f: p=plistlib.load(f)
-assert p.get('CFBundleShortVersionString')=='0.3.0', p.get('CFBundleShortVersionString')
-assert p.get('CFBundleVersion')=='8', p.get('CFBundleVersion')
+assert p.get('CFBundleShortVersionString')==sys.argv[3], (p.get('CFBundleShortVersionString'), sys.argv[3])
+assert p.get('CFBundleVersion')==sys.argv[4], (p.get('CFBundleVersion'), sys.argv[4])
 assert len(sys.argv[2])==40 and all(c in '0123456789abcdef' for c in sys.argv[2])
 assert p.get('METSESourceCommit')==sys.argv[2], p.get('METSESourceCommit')
 assert p.get('UIDeviceFamily')==[1], p.get('UIDeviceFamily')
@@ -23,7 +25,7 @@ assert p.get('UIRequiresFullScreen') is True
 assert p.get('UIStatusBarHidden') is True
 assert p.get('UIViewControllerBasedStatusBarAppearance') is True
 assert p.get('UISupportedInterfaceOrientations')==['UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight']
-print('Build 008 modern iPhone launch contract: PASS')
+print('Build 012 modern iPhone launch contract: PASS')
 PY
 LAUNCH="$(find "$APP" -type d -name 'LaunchScreen.storyboardc' -print -quit)"
 [[ -n "$LAUNCH" ]] || { echo "Compiled LaunchScreen.storyboardc missing" >&2; exit 31; }

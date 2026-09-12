@@ -24,6 +24,25 @@ req(f'MARKETING_VERSION: "{version_value}"' in project_text_for_version,
     'project.yml MARKETING_VERSION must match VERSION file (single source of truth)')
 req(f'CURRENT_PROJECT_VERSION: "{build_value}"' in project_text_for_version,
     'project.yml CURRENT_PROJECT_VERSION must match BUILD file (single source of truth)')
+
+# Found the hard way (a real CI failure): a stale hardcoded version can hide in ANY
+# file, not just files named guardrails_*.py. build_unsigned_ipa.sh hardcoded the
+# plist assertion to a literal old version, and METSEEngineBridge.mm hardcoded the
+# app's own runtime diagnostics dictionary to a literal old version - neither matched
+# this naming pattern, so the original grep sweep during PR #20 missed both. Checking
+# both explicitly now, plus a repo-wide sweep for the specific stale literal so this
+# can never quietly reappear a fifth time.
+build_script_text=text('Scripts/build_unsigned_ipa.sh')
+req('EXPECTED_VERSION' in build_script_text and 'EXPECTED_BUILD' in build_script_text and
+    "cat VERSION" in build_script_text and "cat BUILD" in build_script_text,
+    'build_unsigned_ipa.sh must read expected version/build from VERSION/BUILD files, not hardcode them')
+bridge_text=text('Engine/Platform/Apple/METSEEngineBridge.mm')
+req('CFBundleShortVersionString' in bridge_text and 'CFBundleVersion' in bridge_text,
+    'METSEEngineBridge.mm must read version/build from the bundle Info.plist at runtime, not hardcode them')
+for stale_literal in ('0.3.0', "@\"8\""):
+    for checked_path in ('Scripts/build_unsigned_ipa.sh', 'Engine/Platform/Apple/METSEEngineBridge.mm'):
+        req(stale_literal not in text(checked_path), f'stale version literal {stale_literal!r} found in {checked_path}')
+
 req(not any(ROOT.glob('*.uproject')),'Unreal files forbidden')
 
 plist=ROOT/'iOS/METSE/Info.plist'
