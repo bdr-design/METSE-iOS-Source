@@ -1,5 +1,6 @@
 #import "METSEEngineBridge.h"
 #import "METSEAudioPresenter.h"
+#import "METSEBallisticFXRenderer.h"
 #import "METSEBattlefieldRenderer.h"
 #import "METSECombatantRenderer.h"
 #import "METSEViewmodelRenderer.h"
@@ -17,6 +18,7 @@ static constexpr NSUInteger kRenderObstacleCap = metse::WorldCollisionCore::kMax
 static constexpr NSUInteger kRenderProjectileCap = 8;
 static constexpr NSUInteger kRenderTargetCap = metse::VisibilityCore::kMaxEntities;
 static constexpr NSUInteger kRenderFXCap = 16;
+static constexpr NSUInteger kNativeBallisticFXCap = metse::BallisticsCore::kMaxProjectiles + metse::AudioFXCore::kFXCapacity;
 static_assert(kRenderFXCap <= metse::AudioFXCore::kFXCapacity,
               "Presentation FX budget cannot exceed the simulation-owned pool");
 
@@ -62,6 +64,7 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
 @property(nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property(nonatomic, strong) id<MTLRenderPipelineState> pipeline;
 @property(nonatomic, strong) id<MTLRenderPipelineState> overlayPipeline;
+@property(nonatomic, strong) METSEBallisticFXRenderer *ballisticFXRenderer;
 @property(nonatomic, strong) METSEBattlefieldRenderer *battlefieldRenderer;
 @property(nonatomic, strong) METSECombatantRenderer *combatantRenderer;
 @property(nonatomic, strong) METSEViewmodelRenderer *viewmodelRenderer;
@@ -179,9 +182,15 @@ static_assert(sizeof(METSEFrameUniforms) <= 4096,
         library:library
         colorPixelFormat:view.colorPixelFormat
         depthPixelFormat:view.depthStencilPixelFormat];
+    _ballisticFXRenderer = [[METSEBallisticFXRenderer alloc]
+        initWithDevice:device
+        library:library
+        colorPixelFormat:view.colorPixelFormat
+        depthPixelFormat:view.depthStencilPixelFormat];
     NSLog(@"METSE viewmodel: %@", _viewmodelRenderer.assetStatus);
     NSLog(@"METSE battlefield: %@", _battlefieldRenderer.status);
     NSLog(@"METSE combatants: %@", _combatantRenderer.status);
+    NSLog(@"METSE ballistic FX: %@", _ballisticFXRenderer.status);
     _audioPresenter=[METSEAudioPresenter new];
     view.delegate = self;
     return self;
@@ -608,13 +617,37 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
     METSEFrameUniforms uniforms{};
     float muzzleFlash=0.0f;
     NSUInteger effectWrite=0;
+    std::array<METSEBallisticFXRenderState, kNativeBallisticFXCap> nativeBallisticFX{};
+    NSUInteger nativeBallisticFXWrite=0;
+    for(const auto& projectile:projectiles){
+        if(!projectile.active||nativeBallisticFXWrite>=kNativeBallisticFXCap)continue;
+        nativeBallisticFX[nativeBallisticFXWrite++]={
+            (float)projectile.position.x,(float)projectile.position.y,(float)projectile.position.z,
+            (float)projectile.velocity.x,(float)projectile.velocity.y,(float)projectile.velocity.z,
+            .012f,1.0f,0,1
+        };
+    }
     for(const auto& effect:effects){
         if(!effect.active||effect.lifetimeSeconds<=0.0) continue;
         const float remaining=static_cast<float>(
             std::clamp(1.0-effect.ageSeconds/effect.lifetimeSeconds,0.0,1.0));
-        if(effect.kind==metse::FXKind::MuzzleFlash){
+        const double localDX=effect.position.x-state.playerX;
+        const double localDY=effect.position.y-(state.playerY+state.cameraHeight);
+        const double localDZ=effect.position.z-state.playerZ;
+        const bool localMuzzle=effect.kind==metse::FXKind::MuzzleFlash&&
+            localDX*localDX+localDY*localDY+localDZ*localDZ<1.0;
+        if(localMuzzle){
             muzzleFlash=std::max(muzzleFlash,remaining*static_cast<float>(effect.intensity));
             continue;
+        }
+        if(nativeBallisticFXWrite<kNativeBallisticFXCap){
+            const bool muzzle=effect.kind==metse::FXKind::MuzzleFlash;
+            nativeBallisticFX[nativeBallisticFXWrite++]={
+                (float)effect.position.x,(float)effect.position.y,(float)effect.position.z,
+                (float)effect.velocity.x,(float)effect.velocity.y,(float)effect.velocity.z,
+                muzzle ? .11f : (.14f+.08f*(float)effect.intensity),remaining,
+                (uint8_t)(muzzle?2:1),(uint8_t)effect.material
+            };
         }
         if(effectWrite>=kRenderFXCap) continue;
         uniforms.fxData[effectWrite]=(vector_float4){(float)effect.position.x,(float)effect.position.y,
@@ -712,6 +745,19 @@ static NSString *METSEThermalStateName(NSProcessInfoThermalState state) {
                                           roll:(float)(state.cameraRoll+state.cameraLean)
                                       adsAlpha:(float)state.adsAlpha
                              simulationSeconds:(float)state.simulationSeconds];
+    [self.ballisticFXRenderer encodeWithEncoder:encoder
+                                   commandBuffer:commandBuffer
+                                        viewSize:view.drawableSize
+                                       instances:nativeBallisticFX.data()
+                                           count:nativeBallisticFXWrite
+                                         cameraX:(float)state.playerX
+                                         cameraY:(float)(state.playerY+state.cameraHeight)
+                                         cameraZ:(float)state.playerZ
+                                             yaw:(float)state.playerYaw
+                                           pitch:(float)state.playerPitch
+                                            roll:(float)(state.cameraRoll+state.cameraLean)
+                                        adsAlpha:(float)state.adsAlpha
+                               simulationSeconds:(float)state.simulationSeconds];
     [self.viewmodelRenderer encodeWithEncoder:encoder
                                     viewSize:view.drawableSize
                                     adsAlpha:(float)state.adsAlpha
