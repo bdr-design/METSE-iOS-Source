@@ -17,5 +17,5 @@ assert "Tests/TelemetryCaptureTests.cpp" in read("Scripts/test_engine_core.sh")
 workflow = read(".github/workflows/build-ios-unsigned.yml")
 assert workflow.index("Scripts/guardrails_010e.py") < workflow.index("Scripts/test_engine_core.sh")
 assert "bash Scripts/test_engine_soak.sh 7200" in workflow
-assert read("VERSION").strip()=="0.3.0" and read("BUILD").strip()=="8"
+assert read("VERSION").strip() and read("BUILD").strip().isdigit()
 print("010-E telemetry/soak guardrails: PASS")

@@ -30,16 +30,16 @@ jobs:
       - name: Package exact tracked source
         run: |
           set -euo pipefail
-          git archive --format=zip --output=METSE_Source_v0.3.0_build008.zip HEAD
-          sha256sum METSE_Source_v0.3.0_build008.zip > METSE_Source_v0.3.0_build008.zip.sha256
+          git archive --format=zip --output=METSE_Source_v0.4.0_build012.zip HEAD
+          sha256sum METSE_Source_v0.4.0_build012.zip > METSE_Source_v0.4.0_build012.zip.sha256
           git rev-parse HEAD > SOURCE_COMMIT.txt
       - name: Upload source package
         uses: actions/upload-artifact@v4
         with:
-          name: METSE-source-v0.3.0-build008
+          name: METSE-source-v0.4.0-build012
           if-no-files-found: error
           retention-days: 14
           path: |
-            METSE_Source_v0.3.0_build008.zip
-            METSE_Source_v0.3.0_build008.zip.sha256
+            METSE_Source_v0.4.0_build012.zip
+            METSE_Source_v0.4.0_build012.zip.sha256
             SOURCE_COMMIT.txt

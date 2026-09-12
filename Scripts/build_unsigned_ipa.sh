@@ -38,7 +38,7 @@ ASSET_MANIFEST_RESOURCE="$(find "$APP" -type f -name 'asset_manifest.json' -prin
 [[ -n "$VIEWMODEL_RESOURCE" ]] || { echo "viewmodel.obj missing from app bundle" >&2; exit 41; }
 [[ -n "$ASSET_MANIFEST_RESOURCE" ]] || { echo "asset_manifest.json missing from app bundle" >&2; exit 42; }
 mkdir -p "$OUT/Payload"; cp -R "$APP" "$OUT/Payload/METSE.app"
-(cd "$OUT" && zip -qry METSE_v0.3.0_build008_unsigned.ipa Payload)
-unzip -t "$OUT/METSE_v0.3.0_build008_unsigned.ipa" >/dev/null
-shasum -a 256 "$OUT/METSE_v0.3.0_build008_unsigned.ipa" > "$OUT/METSE_v0.3.0_build008_unsigned.ipa.sha256"
+(cd "$OUT" && zip -qry METSE_v0.4.0_build012_unsigned.ipa Payload)
+unzip -t "$OUT/METSE_v0.4.0_build012_unsigned.ipa" >/dev/null
+shasum -a 256 "$OUT/METSE_v0.4.0_build012_unsigned.ipa" > "$OUT/METSE_v0.4.0_build012_unsigned.ipa.sha256"
 echo "Unsigned IPA Build 008 with Build 009 development systems: PASS"

@@ -263,7 +263,7 @@ void TacticalAICore::fixedStep(double dt,
         if(agent.id==0||!agent.combatCapable) continue;
         const Vec3 before=agent.position;
         advanceAction(agent,world,dt);
-        const double speed=distanceXZ(before,agent.position)/dt;
+        const double speed=dt>1e-9?distanceXZ(before,agent.position)/dt:0.0;
         weapons_[i].fixedStep(dt,speed,0.0,false);
 
         if(agent.perceptionSource!=AIPerceptionSource::None){

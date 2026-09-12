@@ -16,5 +16,5 @@ for token in ("EngineCore", "setMovement", "setActiveCombatants", "triggerFire",
 workflow = read(".github/workflows/build-ios-unsigned.yml")
 assert workflow.index("Scripts/guardrails_010f.py") < workflow.index("Scripts/test_engine_core.sh")
 assert "bash Scripts/test_diagnostic_archive.sh" in workflow
-assert read("VERSION").strip() == "0.3.0" and read("BUILD").strip() == "8"
+assert read("VERSION").strip() and read("BUILD").strip().isdigit()
 print("010-F bounded diagnostics persistence guardrails: PASS")

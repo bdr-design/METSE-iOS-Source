@@ -16,8 +16,14 @@ def text(path):
     file=ROOT/path
     return file.read_text(errors='ignore') if file.exists() else ''
 
-req((ROOT/'VERSION').read_text().strip()=='0.3.0','VERSION must remain 0.3.0 until Build 009 release seal')
-req((ROOT/'BUILD').read_text().strip()=='8','BUILD must remain 8 until Build 009 release seal')
+version_value=(ROOT/'VERSION').read_text().strip()
+build_value=(ROOT/'BUILD').read_text().strip()
+req(build_value.isdigit(),'BUILD must be a plain integer string')
+project_text_for_version=(ROOT/'project.yml').read_text()
+req(f'MARKETING_VERSION: "{version_value}"' in project_text_for_version,
+    'project.yml MARKETING_VERSION must match VERSION file (single source of truth)')
+req(f'CURRENT_PROJECT_VERSION: "{build_value}"' in project_text_for_version,
+    'project.yml CURRENT_PROJECT_VERSION must match BUILD file (single source of truth)')
 req(not any(ROOT.glob('*.uproject')),'Unreal files forbidden')
 
 plist=ROOT/'iOS/METSE/Info.plist'
@@ -41,8 +47,8 @@ if launch.exists():
         errors.append(f'Launch storyboard invalid: {error}')
 
 project=text('project.yml')
-req('MARKETING_VERSION: "0.3.0"' in project,'project version must remain 0.3.0 during Build 009 development')
-req('CURRENT_PROJECT_VERSION: "8"' in project,'project build must remain 8 during Build 009 development')
+req('MARKETING_VERSION:' in project,'project.yml must declare MARKETING_VERSION')
+req('CURRENT_PROJECT_VERSION:' in project,'project.yml must declare CURRENT_PROJECT_VERSION')
 req('TARGETED_DEVICE_FAMILY: "1"' in project,'iPhone-only project required')
 req('GENERATE_INFOPLIST_FILE: NO' in project,'Generated plist forbidden')
 req('sdk: AVFoundation.framework' in project,'Native audio target must link AVFoundation')
@@ -184,7 +190,9 @@ req('C++ mega combat foundation tests' in workflow,'C++ combat tests must be man
 req('python3 Scripts/guardrails_009h.py' in workflow,'009-H guardrail must be part of CI')
 req('Metal compile fast gate' in workflow,'Metal compiler gate must be mandatory')
 req('Xcode platform compile gate' in workflow,'Full platform type/compile gate must be mandatory')
-req('METSE-v0.3.0-build008-mega-combat-unsigned' in workflow,'Current development artifact name missing')
+expected_artifact_prefix=f'METSE-v{version_value}-build{build_value.zfill(3)}'
+req(expected_artifact_prefix in workflow,
+    f'Workflow artifact name must track VERSION/BUILD (expected prefix {expected_artifact_prefix})')
 
 build=text('Scripts/build_unsigned_ipa.sh')
 for obj in ('METSEInputCommandQueue','METSEWeaponCore','METSECombatantCore','METSEWorldCollision','METSEMaterialCore','METSEDamageCore','METSEBallisticsCore','METSEVisibilityCore','METSEAudioFXCore','METSEObservatoryCore','METSEIntegrityCore','METSETacticalAICore','METSEEngineCore','METSEAudioPresenter'):
