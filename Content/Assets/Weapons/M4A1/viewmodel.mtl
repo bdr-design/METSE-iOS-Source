@@ -1,0 +1,31 @@
+# METSE original material palette
+newmtl gunmetal
+Kd 0.075 0.085 0.080
+newmtl receiver
+Kd 0.105 0.115 0.105
+newmtl control
+Kd 0.12 0.13 0.12
+newmtl magazine
+Kd 0.10 0.11 0.095
+newmtl polymer
+Kd 0.055 0.060 0.050
+newmtl rubber
+Kd 0.025 0.028 0.025
+newmtl handguard
+Kd 0.115 0.105 0.080
+newmtl rail
+Kd 0.06 0.065 0.06
+newmtl edge
+Kd 0.16 0.17 0.15
+newmtl barrel
+Kd 0.08 0.085 0.08
+newmtl suppressor
+Kd 0.12 0.115 0.095
+newmtl optic
+Kd 0.055 0.06 0.055
+newmtl glass
+Kd 0.06 0.28 0.26
+newmtl sleeve
+Kd 0.18 0.20 0.13
+newmtl glove
+Kd 0.14 0.13 0.10
